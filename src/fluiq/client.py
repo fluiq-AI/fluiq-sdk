@@ -1,8 +1,6 @@
 import requests
 from fluiq.config import _config
 
-ENDPOINT = "http://localhost:8000/api"
-
 def send_event(data):
 
     if not _config["enabled"]:
@@ -10,7 +8,7 @@ def send_event(data):
     
     try:
         r = requests.post(
-            ENDPOINT+f"/{_config['version']}/ingest",
+            f"{_config['endpoint']}/{_config['version']}/ingest",
             json={
                 "api_key": _config["api_key"],
                 "event":data

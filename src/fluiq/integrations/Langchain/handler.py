@@ -3,7 +3,11 @@ from langchain_core.callbacks.base import BaseCallbackHandler
 
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
-from fluiq.integrations.shared.context import enter_langchain_llm, exit_langchain_llm
+from fluiq.integrations.shared.context import (
+    enter_langchain_llm,
+    exit_langchain_llm,
+    current_parent_id,
+)
 from fluiq.integrations.Langchain.helper.utils import (
     _to_jsonable,
     _model_name,
@@ -35,7 +39,9 @@ class FluiqCallbackHandler(BaseCallbackHandler):
             pass
 
     def _parent(self, parent_run_id):
-        return str(parent_run_id) if parent_run_id else None
+        if parent_run_id:
+            return str(parent_run_id)
+        return current_parent_id()
 
     def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None,
                      tags=None, metadata=None, **kwargs):

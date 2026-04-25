@@ -1,49 +1,44 @@
 
+def _safe(import_path, attr):
+    try:
+        mod = __import__(import_path, fromlist=[attr])
+        getattr(mod, attr)()
+    except Exception:
+        pass
+
+
 def init():
-    try:
-        from fluiq.integrations.OpenAI.trace import patch_openai
-        patch_openai()
-    except ImportError:
-        pass
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_async")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_responses")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_responses_async")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_parse")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_parse_async")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_stream_helper")
+    _safe("fluiq.integrations.OpenAI.trace", "patch_openai_stream_helper_async")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_embeddings")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_embeddings_async")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_images")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_images_async")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_audio")
+    _safe("fluiq.integrations.OpenAI.endpoints", "patch_openai_audio_async")
 
-    try:
-        from fluiq.integrations.OpenAI.trace import patch_openai_responses
-        patch_openai_responses()
-    except ImportError:
-        pass
+    _safe("fluiq.integrations.Anthropic.trace", "patch_anthropic")
+    _safe("fluiq.integrations.Anthropic.trace", "patch_anthropic_async")
+    _safe("fluiq.integrations.Anthropic.trace", "patch_anthropic_beta")
+    _safe("fluiq.integrations.Anthropic.trace", "patch_anthropic_beta_async")
 
-    try:
-        from fluiq.integrations.Anthropic.trace import patch_anthropic
-        patch_anthropic()
-    except ImportError:
-        pass
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_async")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_stream")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_stream_async")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_count_tokens")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_count_tokens_async")
+    _safe("fluiq.integrations.Gemini.trace", "patch_vertexai")
+    _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_async")
+    _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_count_tokens")
+    _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_count_tokens_async")
 
-    try:
-        from fluiq.integrations.Anthropic.trace import patch_anthropic_beta
-        patch_anthropic_beta()
-    except ImportError:
-        pass
+    _safe("fluiq.integrations.Langchain.trace", "patch_langchain")
 
-    try:
-        from fluiq.integrations.Gemini.trace import patch_genai
-        patch_genai()
-    except ImportError:
-        pass
-
-    try:
-        from fluiq.integrations.Gemini.trace import patch_genai_async
-        patch_genai_async()
-    except ImportError:
-        pass
-
-    try:
-        from fluiq.integrations.Gemini.trace import patch_vertexai
-        patch_vertexai()
-    except ImportError:
-        pass
-
-    try:
-        from fluiq.integrations.Langchain.trace import patch_langchain
-        patch_langchain()
-    except ImportError:
-        pass
+    _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_initialize")
