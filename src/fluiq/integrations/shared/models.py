@@ -55,6 +55,7 @@ class LogTrace(BaseModel):
     mcp_results: Optional[List[Any]] = None
 
     trace_id: Optional[str] = None
+    parent_id: Optional[str] = None
     function: Optional[str] = None
     output: Optional[Any] = None
     success: Optional[bool] = None

@@ -1,6 +1,7 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
+from fluiq.integrations.shared.context import is_in_langchain_llm
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -17,6 +18,8 @@ from fluiq.integrations.Anthropic.helper.mcp_trace import (
 
 def _build_messages_wrapper(original):
     def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return original(self, *args, **kwargs)
 
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))

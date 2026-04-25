@@ -1,6 +1,7 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
+from fluiq.integrations.shared.context import is_in_langchain_llm
 from fluiq.integrations.Gemini.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.Gemini.helper.tool_trace import (
     _extract_function_calls,
@@ -65,6 +66,8 @@ def patch_genai():
     original = Models.generate_content
 
     def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         start = time.time()
         response = original(self, *args, **kwargs)
@@ -81,6 +84,8 @@ def patch_genai_async():
     original = AsyncModels.generate_content
 
     async def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return await original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         await _enrich_mcp_sessions(kwargs)
         start = time.time()
@@ -96,6 +101,8 @@ def patch_vertexai():
     original = GenerativeModel.generate_content
 
     def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return original(self, *args, **kwargs)
 
         _gc_pending_tool_calls()
         request_contents = args[0] if args else kwargs.get("contents")

@@ -41,3 +41,9 @@ def init():
         patch_vertexai()
     except ImportError:
         pass
+
+    try:
+        from fluiq.integrations.Langchain.trace import patch_langchain
+        patch_langchain()
+    except ImportError:
+        pass

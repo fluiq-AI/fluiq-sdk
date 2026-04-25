@@ -1,6 +1,7 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
+from fluiq.integrations.shared.context import is_in_langchain_llm
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -17,6 +18,8 @@ def patch_openai():
     original = Completions.create
 
     def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return original(self, *args, **kwargs)
 
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
@@ -73,6 +76,8 @@ def patch_openai_responses():
     original = Responses.create
 
     def wrapped(self, *args, **kwargs):
+        if is_in_langchain_llm():
+            return original(self, *args, **kwargs)
         start = time.time()
         response = original(self, *args, **kwargs)
         end = time.time()
