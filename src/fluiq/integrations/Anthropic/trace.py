@@ -1,6 +1,6 @@
 import time
 from fluiq.tracer import log_trace
-from fluiq.integrations.shared.models import LogTrace
+from fluiq.integrations.shared.models import LogTrace, TraceType
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -15,10 +15,7 @@ from fluiq.integrations.Anthropic.helper.mcp_trace import (
     _extract_mcp_results_from_messages
 )
 
-def patch_anthropic():
-    from anthropic.resources.messages import Messages
-    original = Messages.create
-
+def _build_messages_wrapper(original):
     def wrapped(self, *args, **kwargs):
 
         _gc_pending_tool_calls()
@@ -42,6 +39,7 @@ def patch_anthropic():
 
         payload = LogTrace(
             type="llm",
+            integration=TraceType.Anthropic,
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
             system=_to_jsonable(kwargs.get("system")),
@@ -66,4 +64,14 @@ def patch_anthropic():
 
         return response
 
-    Messages.create = wrapped
+    return wrapped
+
+
+def patch_anthropic():
+    from anthropic.resources.messages import Messages
+    Messages.create = _build_messages_wrapper(Messages.create)
+
+
+def patch_anthropic_beta():
+    from anthropic.resources.beta.messages import Messages as BetaMessages
+    BetaMessages.create = _build_messages_wrapper(BetaMessages.create)

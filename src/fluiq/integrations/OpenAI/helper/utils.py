@@ -3,10 +3,24 @@ MEDIA_PART_TYPES = {
     "input_audio", "audio", "output_audio", "video",
 }
 
-def _to_jsonable(part):
-    if hasattr(part, "model_dump"):
-        return part.model_dump()
-    return part
+def _to_jsonable(obj):
+    if obj is None:
+        return None
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump(mode="json")
+        except TypeError:
+            return obj.model_dump()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if isinstance(obj, list):
+        return [_to_jsonable(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, bytes):
+        import base64
+        return base64.b64encode(obj).decode("ascii")
+    return obj
 
 def _strip_media(content):
     if content is None:

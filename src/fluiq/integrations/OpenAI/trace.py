@@ -1,6 +1,6 @@
 import time
 from fluiq.tracer import log_trace
-from fluiq.integrations.shared.models import LogTrace
+from fluiq.integrations.shared.models import LogTrace, TraceType
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -41,6 +41,7 @@ def patch_openai():
 
         payload = LogTrace(
             type="llm",
+            integration=TraceType.OpenAI,
             model=kwargs.get("model"),
             messages=kwargs.get("messages"),
             tools=_to_jsonable(kwargs.get("tools")),
@@ -81,6 +82,7 @@ def patch_openai_responses():
 
         payload = LogTrace(
             type="llm",
+            integration=TraceType.OpenAI,
             api="responses",
             model=kwargs.get("model"),
             input=_to_jsonable(kwargs.get("input")),

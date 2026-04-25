@@ -24,7 +24,7 @@ async def run():
             await session.initialize()
             response = await client.aio.models.generate_content(
                 model="gemini-2.5-flash",
-                contents="What transport protocols does the MCP spec support?",
+                contents="What transport protocols does the 2025-03-26 MCP spec support?",
                 config=types.GenerateContentConfig(tools=[session]),
             )
             return response.text

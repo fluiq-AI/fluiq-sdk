@@ -19,8 +19,20 @@ def init():
         pass
 
     try:
+        from fluiq.integrations.Anthropic.trace import patch_anthropic_beta
+        patch_anthropic_beta()
+    except ImportError:
+        pass
+
+    try:
         from fluiq.integrations.Gemini.trace import patch_genai
         patch_genai()
+    except ImportError:
+        pass
+
+    try:
+        from fluiq.integrations.Gemini.trace import patch_genai_async
+        patch_genai_async()
     except ImportError:
         pass
 

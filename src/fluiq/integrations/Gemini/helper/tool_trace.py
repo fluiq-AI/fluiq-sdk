@@ -36,6 +36,19 @@ def _finish_reasons(candidates):
     return reasons or None
 
 
+def _sanitize_tools(tools):
+    from fluiq.integrations.Gemini.helper.mcp_trace import (
+        _is_mcp_session,
+        _session_descriptor,
+    )
+    if not tools:
+        return tools
+    return [
+        _session_descriptor(t) if _is_mcp_session(t) else t
+        for t in tools
+    ]
+
+
 def _extract_request_tools(kwargs, instance=None):
     """Tools/tool_config can live at top-level kwargs (vertexai, older genai)
     or inside kwargs['config'] (google-genai v1 pattern), or on the model
@@ -55,7 +68,7 @@ def _extract_request_tools(kwargs, instance=None):
     if instance is not None and not tools:
         tools = getattr(instance, "_tools", None) or getattr(instance, "tools", None)
 
-    return _to_jsonable(tools), _to_jsonable(tool_config)
+    return _to_jsonable(_sanitize_tools(tools)), _to_jsonable(tool_config)
 
 
 def _fc_id_and_name(fc):

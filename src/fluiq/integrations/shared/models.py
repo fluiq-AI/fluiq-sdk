@@ -1,6 +1,17 @@
 from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict
+from enum import Enum
 
+class TraceType(str, Enum):
+    General_Function: str = "OTHERFUNCTION"
+    Gemini: str = "GEMINI"
+    OpenAI: str = "OPENAI"
+    Anthropic: str = "ANTHROPIC"
+    LangChain: str = "LANGCHAIN"
+    LangGraph: str = "LANGGRAPH"
+    CrewAI: str = "CREWAI"
+    GoogleADK: str = "GOOGLEADK"
+    AgentToAgent: str = "AGENTTOAGENT"
 
 class Tokens(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -11,6 +22,7 @@ class Tokens(BaseModel):
 
 
 class LogTrace(BaseModel):
+    integration: Optional[TraceType] = ""
     model_config = ConfigDict(extra="allow", protected_namespaces=())
 
     type: Optional[str] = None

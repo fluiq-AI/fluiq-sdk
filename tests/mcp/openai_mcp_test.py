@@ -22,7 +22,7 @@ def run():
         ],
         input="What transport protocols does the 2025-03-26 MCP spec support?",
     )
-    return resp.output_text
+    return resp
 
 
 print(run())
