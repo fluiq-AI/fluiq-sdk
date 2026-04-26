@@ -2,7 +2,7 @@ import anthropic
 import fluiq
 from dotenv import load_dotenv
 
-fluiq.instrument(api_key="your-fluiq-key")
+fluiq.instrument(api_key="fl_zLBKMj9NVmILlOUN32awEuYNso_t45u48ggMPZ-Kkqk")
 
 load_dotenv()
 

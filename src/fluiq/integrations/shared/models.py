@@ -9,6 +9,7 @@ class TraceType(str, Enum):
     Anthropic: str = "ANTHROPIC"
     LangChain: str = "LANGCHAIN"
     LangGraph: str = "LANGGRAPH"
+    LlamaIndex: str = "LLAMAINDEX"
     CrewAI: str = "CREWAI"
     GoogleADK: str = "GOOGLEADK"
     AgentToAgent: str = "AGENTTOAGENT"
