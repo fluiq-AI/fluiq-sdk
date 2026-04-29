@@ -1,7 +1,7 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
-from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id
+from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id, format_error_traceback
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -85,6 +85,24 @@ def _emit_messages_stream_trace(kwargs, acc, start, end, tool_call_latencies):
     log_trace(payload.model_dump(mode="json"))
 
 
+def _emit_messages_error(kwargs, error, start, end, api=None):
+    payload = LogTrace(
+        type="llm",
+        integration=TraceType.Anthropic,
+        api=api,
+        model=kwargs.get("model"),
+        messages=_to_jsonable(kwargs.get("messages")),
+        system=_to_jsonable(kwargs.get("system")),
+        tools=_to_jsonable(kwargs.get("tools")),
+        output=str(error),
+        error_traceback=format_error_traceback(error),
+        latency=end - start,
+        parent_id=current_parent_id(),
+        success=False,
+    )
+    log_trace(payload.model_dump(mode="json"))
+
+
 def _wrap_messages_stream(stream, kwargs, start, tool_call_latencies, async_=False):
     acc = _MessageStreamAccumulator()
 
@@ -94,8 +112,11 @@ def _wrap_messages_stream(stream, kwargs, start, tool_call_latencies, async_=Fal
     def on_end():
         _emit_messages_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
 
+    def on_error(exc):
+        _emit_messages_error(kwargs, exc, start, time.time(), api="messages.stream")
+
     Proxy = _AsyncStreamProxy if async_ else _StreamProxy
-    return Proxy(stream, on_chunk, on_end)
+    return Proxy(stream, on_chunk, on_end, on_error=on_error)
 
 
 def _build_messages_wrapper(original):
@@ -107,7 +128,11 @@ def _build_messages_wrapper(original):
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         start = time.time()
-        response = original(self, *args, **kwargs)
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=False)
@@ -128,7 +153,11 @@ def _build_async_messages_wrapper(original):
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         start = time.time()
-        response = await original(self, *args, **kwargs)
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=True)
@@ -202,7 +231,12 @@ def _build_stream_helper_wrapper(original):
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
-        manager = original(self, *args, **kwargs)
+        start = time.time()
+        try:
+            manager = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+            raise
         return _AnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies)
     return wrapped
 
@@ -213,7 +247,12 @@ def _build_async_stream_helper_wrapper(original):
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
-        manager = original(self, *args, **kwargs)
+        start = time.time()
+        try:
+            manager = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+            raise
         return _AsyncAnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies)
     return wrapped
 
@@ -241,7 +280,11 @@ def _build_count_tokens_wrapper(original, api):
         if is_in_langchain_llm():
             return original(self, *args, **kwargs)
         start = time.time()
-        response = original(self, *args, **kwargs)
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time(), api=api)
+            raise
         end = time.time()
         _emit_count_tokens_trace(api, kwargs, response, start, end)
         return response
@@ -253,7 +296,11 @@ def _build_async_count_tokens_wrapper(original, api):
         if is_in_langchain_llm():
             return await original(self, *args, **kwargs)
         start = time.time()
-        response = await original(self, *args, **kwargs)
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time(), api=api)
+            raise
         end = time.time()
         _emit_count_tokens_trace(api, kwargs, response, start, end)
         return response

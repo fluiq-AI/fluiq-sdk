@@ -96,11 +96,15 @@ class _ResponsesStreamAccumulator:
 
 
 class _StreamProxy:
-    """Wraps a sync stream iterator; calls on_chunk(chunk) for each chunk and on_end() at completion."""
-    def __init__(self, stream, on_chunk, on_end):
+    """Wraps a sync stream iterator; calls on_chunk(chunk) for each chunk and
+    on_end() at completion. on_error(exc), if provided, is invoked when the
+    underlying stream raises mid-iteration; on_end is suppressed in that case.
+    """
+    def __init__(self, stream, on_chunk, on_end, on_error=None):
         self._stream = stream
         self._on_chunk = on_chunk
         self._on_end = on_end
+        self._on_error = on_error
         self._ended = False
 
     def __iter__(self):
@@ -112,15 +116,21 @@ class _StreamProxy:
         except StopIteration:
             self._finalize()
             raise
+        except BaseException as e:
+            self._finalize(error=e)
+            raise
         self._on_chunk(chunk)
         return chunk
 
-    def _finalize(self):
+    def _finalize(self, error=None):
         if self._ended:
             return
         self._ended = True
         try:
-            self._on_end()
+            if error is not None and self._on_error is not None:
+                self._on_error(error)
+            else:
+                self._on_end()
         except Exception:
             pass
 
@@ -134,17 +144,18 @@ class _StreamProxy:
             if hasattr(self._stream, "__exit__"):
                 self._stream.__exit__(exc_type, exc, tb)
         finally:
-            self._finalize()
+            self._finalize(error=exc)
 
     def __getattr__(self, name):
         return getattr(self._stream, name)
 
 
 class _AsyncStreamProxy:
-    def __init__(self, stream, on_chunk, on_end):
+    def __init__(self, stream, on_chunk, on_end, on_error=None):
         self._stream = stream
         self._on_chunk = on_chunk
         self._on_end = on_end
+        self._on_error = on_error
         self._ended = False
 
     def __aiter__(self):
@@ -156,15 +167,21 @@ class _AsyncStreamProxy:
         except StopAsyncIteration:
             self._finalize()
             raise
+        except BaseException as e:
+            self._finalize(error=e)
+            raise
         self._on_chunk(chunk)
         return chunk
 
-    def _finalize(self):
+    def _finalize(self, error=None):
         if self._ended:
             return
         self._ended = True
         try:
-            self._on_end()
+            if error is not None and self._on_error is not None:
+                self._on_error(error)
+            else:
+                self._on_end()
         except Exception:
             pass
 
@@ -178,7 +195,7 @@ class _AsyncStreamProxy:
             if hasattr(self._stream, "__aexit__"):
                 await self._stream.__aexit__(exc_type, exc, tb)
         finally:
-            self._finalize()
+            self._finalize(error=exc)
 
     def __getattr__(self, name):
         return getattr(self._stream, name)

@@ -41,4 +41,8 @@ def init():
 
     _safe("fluiq.integrations.Langchain.trace", "patch_langchain")
 
+    _safe("fluiq.integrations.LangGraph.trace", "patch_langgraph")
+
+    _safe("fluiq.integrations.GoogleADK.trace", "patch_google_adk")
+
     _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_initialize")

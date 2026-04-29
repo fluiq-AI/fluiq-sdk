@@ -1,7 +1,7 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
-from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id
+from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id, format_error_traceback
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -103,6 +103,41 @@ def _emit_responses_trace(kwargs, response, start, end):
     log_trace(payload.model_dump(mode="json"))
 
 
+def _emit_chat_error(kwargs, error, start, end, api="chat.completions"):
+    payload = LogTrace(
+        type="llm",
+        integration=TraceType.OpenAI,
+        api=api,
+        model=kwargs.get("model"),
+        messages=kwargs.get("messages"),
+        tools=_to_jsonable(kwargs.get("tools")),
+        tool_choice=_to_jsonable(kwargs.get("tool_choice")),
+        output=str(error),
+        error_traceback=format_error_traceback(error),
+        latency=end - start,
+        parent_id=current_parent_id(),
+        success=False,
+    )
+    log_trace(payload.model_dump(mode="json"))
+
+
+def _emit_responses_error(kwargs, error, start, end, api="responses"):
+    payload = LogTrace(
+        type="llm",
+        integration=TraceType.OpenAI,
+        api=api,
+        model=kwargs.get("model"),
+        input=_to_jsonable(kwargs.get("input")),
+        tools=_to_jsonable(kwargs.get("tools")),
+        output=str(error),
+        error_traceback=format_error_traceback(error),
+        latency=end - start,
+        parent_id=current_parent_id(),
+        success=False,
+    )
+    log_trace(payload.model_dump(mode="json"))
+
+
 def _emit_responses_stream_trace(kwargs, acc, start, end):
     from fluiq.integrations.OpenAI.helper.mcp_trace import (
         _extract_mcp_servers_from_tools,
@@ -137,8 +172,11 @@ def _wrap_chat_stream(stream, kwargs, start, tool_call_latencies, async_=False):
     def on_end():
         _emit_chat_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
 
+    def on_error(exc):
+        _emit_chat_error(kwargs, exc, start, time.time(), api="chat.completions.stream")
+
     Proxy = _AsyncStreamProxy if async_ else _StreamProxy
-    return Proxy(stream, on_chunk, on_end)
+    return Proxy(stream, on_chunk, on_end, on_error=on_error)
 
 
 def _wrap_responses_stream(stream, kwargs, start, async_=False):
@@ -150,8 +188,11 @@ def _wrap_responses_stream(stream, kwargs, start, async_=False):
     def on_end():
         _emit_responses_stream_trace(kwargs, acc, start, time.time())
 
+    def on_error(exc):
+        _emit_responses_error(kwargs, exc, start, time.time(), api="responses.stream")
+
     Proxy = _AsyncStreamProxy if async_ else _StreamProxy
-    return Proxy(stream, on_chunk, on_end)
+    return Proxy(stream, on_chunk, on_end, on_error=on_error)
 
 
 def patch_openai():
@@ -167,7 +208,11 @@ def patch_openai():
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         start = time.time()
-        response = original(self, *args, **kwargs)
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_chat_stream(response, kwargs, start, tool_call_latencies, async_=False)
@@ -192,7 +237,11 @@ def patch_openai_async():
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         start = time.time()
-        response = await original(self, *args, **kwargs)
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_chat_stream(response, kwargs, start, tool_call_latencies, async_=True)
@@ -212,7 +261,11 @@ def patch_openai_responses():
         if is_in_langchain_llm():
             return original(self, *args, **kwargs)
         start = time.time()
-        response = original(self, *args, **kwargs)
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_responses_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_responses_stream(response, kwargs, start, async_=False)
@@ -232,7 +285,11 @@ def patch_openai_responses_async():
         if is_in_langchain_llm():
             return await original(self, *args, **kwargs)
         start = time.time()
-        response = await original(self, *args, **kwargs)
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_responses_error(kwargs, e, start, time.time())
+            raise
 
         if kwargs.get("stream"):
             return _wrap_responses_stream(response, kwargs, start, async_=True)
@@ -312,7 +369,11 @@ def patch_openai_parse():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         start = time.time()
-        response = original(self, *args, **kwargs)
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.parse")
+            raise
         end = time.time()
         _emit_chat_trace(kwargs, response, start, end, tool_call_latencies)
         return response
@@ -332,7 +393,11 @@ def patch_openai_parse_async():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         start = time.time()
-        response = await original(self, *args, **kwargs)
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.parse")
+            raise
         end = time.time()
         _emit_chat_trace(kwargs, response, start, end, tool_call_latencies)
         return response
@@ -351,7 +416,12 @@ def patch_openai_stream_helper():
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
-        manager = original(self, *args, **kwargs)
+        start = time.time()
+        try:
+            manager = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.stream")
+            raise
         return _OpenAIStreamManagerProxy(manager, kwargs, tool_call_latencies)
 
     Completions.stream = wrapped
@@ -368,7 +438,12 @@ def patch_openai_stream_helper_async():
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
-        manager = original(self, *args, **kwargs)
+        start = time.time()
+        try:
+            manager = original(self, *args, **kwargs)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.stream")
+            raise
         return _AsyncOpenAIStreamManagerProxy(manager, kwargs, tool_call_latencies)
 
     AsyncCompletions.stream = wrapped

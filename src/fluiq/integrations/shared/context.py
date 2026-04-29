@@ -1,3 +1,4 @@
+import traceback
 from contextvars import ContextVar
 
 _in_langchain_llm: ContextVar = ContextVar("fluiq_in_langchain_llm", default=False)
@@ -36,3 +37,13 @@ def pop_trace_id(token):
         _current_trace_id.reset(token)
     except (ValueError, LookupError):
         pass
+
+
+def format_error_traceback(error):
+    if error is None:
+        return None
+    tb = getattr(error, "__traceback__", None)
+    if tb is not None:
+        return "".join(traceback.format_exception(type(error), error, tb))
+    formatted = traceback.format_exc()
+    return formatted if formatted and formatted.strip() != "NoneType: None" else None
