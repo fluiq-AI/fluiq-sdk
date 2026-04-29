@@ -7,6 +7,10 @@ name = "fluiq"
 version = "0.1.0"
 description = "Fluiq SDK"
 requires-python = ">=3.9"
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "requests>=2.31",
 ]
