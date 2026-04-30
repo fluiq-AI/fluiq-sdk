@@ -25,7 +25,7 @@ def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
     log_trace(payload.model_dump(mode="json"))
 
 
-def trace(func):
+def _build_wrapper(func, func_name):
     if asyncio.iscoroutinefunction(func):
         async def async_wrapper(*args, **kwargs):
             trace_id = str(uuid.uuid4())
@@ -40,7 +40,7 @@ def trace(func):
                 exc = e
             end = time.time()
             pop_trace_id(token)
-            _emit(trace_id, parent_id, func.__name__, args, kwargs, result, exc, start, end)
+            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
             if exc is not None:
                 raise exc
             return result
@@ -59,9 +59,19 @@ def trace(func):
             exc = e
         end = time.time()
         pop_trace_id(token)
-        _emit(trace_id, parent_id, func.__name__, args, kwargs, result, exc, start, end)
+        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
         if exc is not None:
             raise exc
         return result
 
     return wrapper
+
+
+def trace(func=None, *, name=None):
+    if func is not None and callable(func):
+        return _build_wrapper(func, name or func.__name__)
+
+    def decorator(f):
+        return _build_wrapper(f, name or f.__name__)
+
+    return decorator

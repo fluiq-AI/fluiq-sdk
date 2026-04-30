@@ -45,4 +45,14 @@ def init():
 
     _safe("fluiq.integrations.GoogleADK.trace", "patch_google_adk")
 
+    _safe("fluiq.integrations.Vectorstores.Chromadb.trace", "patch_chromadb")
+    _safe("fluiq.integrations.Vectorstores.Chromadb.trace", "patch_chromadb_async")
+    _safe("fluiq.integrations.Vectorstores.Pinecone.trace", "patch_pinecone")
+    _safe("fluiq.integrations.Vectorstores.Pinecone.trace", "patch_pinecone_async")
+    _safe("fluiq.integrations.Vectorstores.Qdrant.trace", "patch_qdrant")
+    _safe("fluiq.integrations.Vectorstores.Qdrant.trace", "patch_qdrant_async")
+    _safe("fluiq.integrations.Vectorstores.Weaviate.trace", "patch_weaviate")
+    _safe("fluiq.integrations.Vectorstores.Weaviate.trace", "patch_weaviate_async")
+    _safe("fluiq.integrations.Vectorstores.FAISS.trace", "patch_faiss")
+
     _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_initialize")

@@ -13,6 +13,11 @@ class TraceType(str, Enum):
     CrewAI: str = "CREWAI"
     GoogleADK: str = "GOOGLEADK"
     AgentToAgent: str = "AGENTTOAGENT"
+    ChromaDB: str = "CHROMADB"
+    Pinecone: str = "PINECONE"
+    Qdrant: str = "QDRANT"
+    Weaviate: str = "WEAVIATE"
+    FAISS: str = "FAISS"
 
 class Tokens(BaseModel):
     model_config = ConfigDict(extra="allow")
