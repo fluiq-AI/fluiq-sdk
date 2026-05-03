@@ -1,7 +1,14 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
-from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id, format_error_traceback
+from fluiq.integrations.shared.context import (
+    is_in_langchain_llm,
+    current_parent_id,
+    format_error_traceback,
+    push_llm_trace_id,
+    pop_llm_trace_id,
+)
+from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.Gemini.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.Gemini.helper.tool_trace import (
     _extract_function_calls,
@@ -87,15 +94,24 @@ def patch_genai():
         if is_in_langchain_llm():
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="generate_content",
+            model=kwargs.get("model"),
+            contents=_to_jsonable(kwargs.get("contents")),
+        )
         start = time.time()
         try:
-            response = original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_genai_error(kwargs, e, start, time.time())
-            raise
-        end = time.time()
-        _emit_genai_trace(kwargs, response, start, end)
-        return response
+            try:
+                response = original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_genai_error(kwargs, e, start, time.time())
+                raise
+            end = time.time()
+            _emit_genai_trace(kwargs, response, start, end)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     Models.generate_content = wrapped
 
@@ -110,15 +126,24 @@ def patch_genai_async():
             return await original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         await _enrich_mcp_sessions(kwargs)
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="generate_content",
+            model=kwargs.get("model"),
+            contents=_to_jsonable(kwargs.get("contents")),
+        )
         start = time.time()
         try:
-            response = await original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_genai_error(kwargs, e, start, time.time())
-            raise
-        end = time.time()
-        _emit_genai_trace(kwargs, response, start, end)
-        return response
+            try:
+                response = await original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_genai_error(kwargs, e, start, time.time())
+                raise
+            end = time.time()
+            _emit_genai_trace(kwargs, response, start, end)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     AsyncModels.generate_content = wrapped
 
@@ -146,22 +171,31 @@ def patch_genai_stream():
             return
         _gc_pending_tool_calls()
         agg = _GenaiStreamAggregator()
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="generate_content_stream",
+            model=kwargs.get("model"),
+            contents=_to_jsonable(kwargs.get("contents")),
+        )
         start = time.time()
         errored = False
         try:
-            for chunk in original(self, *args, **kwargs):
-                agg.feed(chunk)
-                yield chunk
-        except Exception as e:
-            errored = True
-            _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
-            raise
+            try:
+                for chunk in original(self, *args, **kwargs):
+                    agg.feed(chunk)
+                    yield chunk
+            except Exception as e:
+                errored = True
+                _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                raise
+            finally:
+                if not errored:
+                    end = time.time()
+                    latest, _ = agg.assemble()
+                    if latest is not None:
+                        _emit_genai_trace(kwargs, latest, start, end)
         finally:
-            if not errored:
-                end = time.time()
-                latest, _ = agg.assemble()
-                if latest is not None:
-                    _emit_genai_trace(kwargs, latest, start, end)
+            pop_llm_trace_id(ctx_tok)
 
     Models.generate_content_stream = wrapped
 
@@ -178,22 +212,31 @@ def patch_genai_stream_async():
         _gc_pending_tool_calls()
         await _enrich_mcp_sessions(kwargs)
         agg = _GenaiStreamAggregator()
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="generate_content_stream",
+            model=kwargs.get("model"),
+            contents=_to_jsonable(kwargs.get("contents")),
+        )
         start = time.time()
         errored = False
         try:
-            async for chunk in original(self, *args, **kwargs):
-                agg.feed(chunk)
-                yield chunk
-        except Exception as e:
-            errored = True
-            _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
-            raise
+            try:
+                async for chunk in original(self, *args, **kwargs):
+                    agg.feed(chunk)
+                    yield chunk
+            except Exception as e:
+                errored = True
+                _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                raise
+            finally:
+                if not errored:
+                    end = time.time()
+                    latest, _ = agg.assemble()
+                    if latest is not None:
+                        _emit_genai_trace(kwargs, latest, start, end)
         finally:
-            if not errored:
-                end = time.time()
-                latest, _ = agg.assemble()
-                if latest is not None:
-                    _emit_genai_trace(kwargs, latest, start, end)
+            pop_llm_trace_id(ctx_tok)
 
     AsyncModels.generate_content_stream = wrapped
 
@@ -228,7 +271,7 @@ def _emit_vertex_trace(self, kwargs, request_contents, response, start, end, too
     log_trace(payload.model_dump(mode="json"))
 
 
-def _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start):
+def _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start, trace_id=None):
     agg = _GenaiStreamAggregator()
     errored = False
     try:
@@ -237,17 +280,27 @@ def _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latenci
             yield chunk
     except Exception as e:
         errored = True
-        _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
         raise
     finally:
         if not errored:
             end = time.time()
             latest, _ = agg.assemble()
             if latest is not None:
-                _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+                tok = push_llm_trace_id(trace_id) if trace_id else None
+                try:
+                    _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+                finally:
+                    if tok is not None:
+                        pop_llm_trace_id(tok)
 
 
-async def _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start):
+async def _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start, trace_id=None):
     agg = _GenaiStreamAggregator()
     errored = False
     try:
@@ -256,14 +309,24 @@ async def _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_
             yield chunk
     except Exception as e:
         errored = True
-        _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
         raise
     finally:
         if not errored:
             end = time.time()
             latest, _ = agg.assemble()
             if latest is not None:
-                _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+                tok = push_llm_trace_id(trace_id) if trace_id else None
+                try:
+                    _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+                finally:
+                    if tok is not None:
+                        pop_llm_trace_id(tok)
 
 
 def _emit_vertex_error(self, kwargs, request_contents, error, start, end):
@@ -294,19 +357,29 @@ def patch_vertexai():
         request_contents = args[0] if args else kwargs.get("contents")
         tool_call_latencies = _compute_tool_call_latencies(request_contents)
 
+        model = getattr(self, "_model_name", None) or getattr(self, "model_name", None)
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="vertex.generate_content",
+            model=model,
+            contents=_to_jsonable(request_contents),
+        )
         start = time.time()
         try:
-            response = original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
-            raise
+            try:
+                response = original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+                raise
 
-        if kwargs.get("stream"):
-            return _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, response, start)
+            if kwargs.get("stream"):
+                return _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, response, start, trace_id=trace_id)
 
-        end = time.time()
-        _emit_vertex_trace(self, kwargs, request_contents, response, start, end, tool_call_latencies)
-        return response
+            end = time.time()
+            _emit_vertex_trace(self, kwargs, request_contents, response, start, end, tool_call_latencies)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     GenerativeModel.generate_content = wrapped
 
@@ -325,19 +398,29 @@ def patch_vertexai_async():
         request_contents = args[0] if args else kwargs.get("contents")
         tool_call_latencies = _compute_tool_call_latencies(request_contents)
 
+        model = getattr(self, "_model_name", None) or getattr(self, "model_name", None)
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Gemini,
+            api="vertex.generate_content",
+            model=model,
+            contents=_to_jsonable(request_contents),
+        )
         start = time.time()
         try:
-            response = await original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
-            raise
+            try:
+                response = await original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+                raise
 
-        if kwargs.get("stream"):
-            return _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, response, start)
+            if kwargs.get("stream"):
+                return _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, response, start, trace_id=trace_id)
 
-        end = time.time()
-        _emit_vertex_trace(self, kwargs, request_contents, response, start, end, tool_call_latencies)
-        return response
+            end = time.time()
+            _emit_vertex_trace(self, kwargs, request_contents, response, start, end, tool_call_latencies)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     GenerativeModel.generate_content_async = wrapped
 

@@ -3,6 +3,7 @@ from contextvars import ContextVar
 
 _in_langchain_llm: ContextVar = ContextVar("fluiq_in_langchain_llm", default=False)
 _current_trace_id: ContextVar = ContextVar("fluiq_current_trace_id", default=None)
+_current_llm_trace_id: ContextVar = ContextVar("fluiq_current_llm_trace_id", default=None)
 
 
 def is_in_langchain_llm() -> bool:
@@ -35,6 +36,23 @@ def pop_trace_id(token):
         return
     try:
         _current_trace_id.reset(token)
+    except (ValueError, LookupError):
+        pass
+
+
+def current_llm_trace_id():
+    return _current_llm_trace_id.get()
+
+
+def push_llm_trace_id(trace_id):
+    return _current_llm_trace_id.set(trace_id)
+
+
+def pop_llm_trace_id(token):
+    if token is None:
+        return
+    try:
+        _current_llm_trace_id.reset(token)
     except (ValueError, LookupError):
         pass
 

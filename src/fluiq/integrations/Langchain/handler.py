@@ -68,6 +68,27 @@ class FluiqCallbackHandler(BaseCallbackHandler):
             kwargs.setdefault("langgraph", lg)
         self._emit(LogTrace(**kwargs))
 
+    def _emit_start(self, *, run_id, parent_run_id, metadata, type, **kwargs):
+        # Lightweight live-progress signal: same trace_id as the eventual
+        # `_end` emission so the frontend can replace the running row in
+        # place. No latency / output / tokens — those land on completion.
+        lg = _langgraph_meta(metadata)
+        payload_kwargs = {
+            "type": type,
+            "trace_id": str(run_id),
+            "parent_id": self._parent(parent_run_id),
+            "integration": _integration_for(metadata),
+            "status": "running",
+            "started_at": time.time(),
+            **kwargs,
+        }
+        if lg is not None:
+            payload_kwargs.setdefault("langgraph", lg)
+        try:
+            self._emit(LogTrace(**payload_kwargs))
+        except Exception:
+            pass
+
     def _parent(self, parent_run_id):
         if parent_run_id:
             return str(parent_run_id)
@@ -76,27 +97,45 @@ class FluiqCallbackHandler(BaseCallbackHandler):
     def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None,
                      tags=None, metadata=None, **kwargs):
         token = enter_langchain_llm()
+        model = _model_name(serialized, kwargs.get("invocation_params"), metadata)
         self._start(
             run_id,
             parent_id=self._parent(parent_run_id),
-            model=_model_name(serialized, kwargs.get("invocation_params"), metadata),
+            model=model,
             prompts=prompts,
             tools=kwargs.get("invocation_params", {}).get("tools"),
             metadata=metadata,
             _lc_token=token,
         )
+        self._emit_start(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            metadata=metadata,
+            type="llm",
+            model=model,
+            input=_to_jsonable(prompts),
+        )
 
     def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None,
                             tags=None, metadata=None, **kwargs):
         token = enter_langchain_llm()
+        model = _model_name(serialized, kwargs.get("invocation_params"), metadata)
         self._start(
             run_id,
             parent_id=self._parent(parent_run_id),
-            model=_model_name(serialized, kwargs.get("invocation_params"), metadata),
+            model=model,
             messages=messages,
             tools=kwargs.get("invocation_params", {}).get("tools"),
             metadata=metadata,
             _lc_token=token,
+        )
+        self._emit_start(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            metadata=metadata,
+            type="llm",
+            model=model,
+            messages=_to_jsonable(messages),
         )
 
     def on_llm_end(self, response, *, run_id, parent_run_id=None, **kwargs):
@@ -138,12 +177,21 @@ class FluiqCallbackHandler(BaseCallbackHandler):
 
     def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None,
                        tags=None, metadata=None, **kwargs):
+        name = _component_name(serialized)
         self._start(
             run_id,
             parent_id=self._parent(parent_run_id),
-            name=_component_name(serialized),
+            name=name,
             inputs=inputs,
             metadata=metadata,
+        )
+        self._emit_start(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            metadata=metadata,
+            type="chain",
+            function=name,
+            input=_to_jsonable(inputs),
         )
 
     def on_chain_end(self, outputs, *, run_id, parent_run_id=None, **kwargs):
@@ -177,12 +225,21 @@ class FluiqCallbackHandler(BaseCallbackHandler):
 
     def on_tool_start(self, serialized, input_str, *, run_id, parent_run_id=None,
                       tags=None, metadata=None, inputs=None, **kwargs):
+        name = _component_name(serialized)
         self._start(
             run_id,
             parent_id=self._parent(parent_run_id),
-            name=_component_name(serialized),
+            name=name,
             input=input_str,
             metadata=metadata,
+        )
+        self._emit_start(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            metadata=metadata,
+            type="tool",
+            function=name,
+            input=input_str,
         )
 
     def on_tool_end(self, output, *, run_id, parent_run_id=None, **kwargs):

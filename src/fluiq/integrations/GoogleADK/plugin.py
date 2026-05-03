@@ -36,6 +36,18 @@ class FluiqADKPlugin(BasePlugin):
         except Exception:
             pass
 
+    def _emit_start(self, **kwargs):
+        # Lightweight live-progress signal: same trace_id as the eventual
+        # completion emission so the frontend can replace the running row in
+        # place. No latency / output / tokens — those land on completion.
+        kwargs.setdefault("integration", TraceType.GoogleADK)
+        kwargs.setdefault("status", "running")
+        kwargs.setdefault("started_at", time.time())
+        try:
+            self._emit(LogTrace(**kwargs))
+        except Exception:
+            pass
+
     @staticmethod
     def _agent_key(agent, callback_context):
         # ADK builds a fresh CallbackContext for before_/after_agent_callback
@@ -50,18 +62,31 @@ class FluiqADKPlugin(BasePlugin):
         parent_id = current_parent_id()
         token = push_trace_id(trace_id)
         output_keys = _collect_output_keys(agent)
+        invocation_id = _invocation_id(callback_context)
+        agent_name = getattr(agent, "name", None)
+        model = _agent_model(agent)
+        user_input = _user_message(callback_context)
         self._agents[self._agent_key(agent, callback_context)] = {
             "trace_id": trace_id,
             "parent_id": parent_id,
             "start": time.time(),
-            "agent_name": getattr(agent, "name", None),
-            "model": _agent_model(agent),
-            "input": _user_message(callback_context),
+            "agent_name": agent_name,
+            "model": model,
+            "input": user_input,
             "_token": token,
-            "invocation_id": _invocation_id(callback_context),
+            "invocation_id": invocation_id,
             "output_keys": output_keys,
             "state_before": _state_snapshot(callback_context, output_keys),
         }
+        self._emit_start(
+            type="agent",
+            function=agent_name,
+            model=model,
+            input=user_input,
+            trace_id=trace_id,
+            parent_id=parent_id,
+            invocation_id=invocation_id,
+        )
         return None
 
     async def after_agent_callback(self, *, agent, callback_context):
@@ -112,15 +137,25 @@ class FluiqADKPlugin(BasePlugin):
 
     async def before_tool_callback(self, *, tool, tool_args, tool_context):
         trace_id = str(uuid.uuid4())
+        parent_id = current_parent_id()
+        tool_name = getattr(tool, "name", None)
+        tool_input = _to_jsonable(tool_args)
         self._tools[id(tool_context)] = {
             "trace_id": trace_id,
-            "parent_id": current_parent_id(),
+            "parent_id": parent_id,
             "start": time.time(),
-            "name": getattr(tool, "name", None),
+            "name": tool_name,
             "description": getattr(tool, "description", None),
-            "input": _to_jsonable(tool_args),
+            "input": tool_input,
             "schema": _tool_input_schema(tool),
         }
+        self._emit_start(
+            type="tool",
+            function=tool_name,
+            input=tool_input,
+            trace_id=trace_id,
+            parent_id=parent_id,
+        )
         return None
 
     async def after_tool_callback(self, *, tool, tool_args, tool_context, result):

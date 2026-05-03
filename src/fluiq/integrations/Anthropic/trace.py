@@ -1,7 +1,14 @@
 import time
 from fluiq.tracer import log_trace
 from fluiq.integrations.shared.models import LogTrace, TraceType
-from fluiq.integrations.shared.context import is_in_langchain_llm, current_parent_id, format_error_traceback
+from fluiq.integrations.shared.context import (
+    is_in_langchain_llm,
+    current_parent_id,
+    format_error_traceback,
+    push_llm_trace_id,
+    pop_llm_trace_id,
+)
+from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -103,17 +110,27 @@ def _emit_messages_error(kwargs, error, start, end, api=None):
     log_trace(payload.model_dump(mode="json"))
 
 
-def _wrap_messages_stream(stream, kwargs, start, tool_call_latencies, async_=False):
+def _wrap_messages_stream(stream, kwargs, start, tool_call_latencies, async_=False, trace_id=None):
     acc = _MessageStreamAccumulator()
 
     def on_chunk(chunk):
         acc.feed(chunk)
 
     def on_end():
-        _emit_messages_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            _emit_messages_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
 
     def on_error(exc):
-        _emit_messages_error(kwargs, exc, start, time.time(), api="messages.stream")
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            _emit_messages_error(kwargs, exc, start, time.time(), api="messages.stream")
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
 
     Proxy = _AsyncStreamProxy if async_ else _StreamProxy
     return Proxy(stream, on_chunk, on_end, on_error=on_error)
@@ -127,19 +144,29 @@ def _build_messages_wrapper(original):
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Anthropic,
+            api="messages",
+            model=kwargs.get("model"),
+            messages=_to_jsonable(kwargs.get("messages")),
+            system=_to_jsonable(kwargs.get("system")),
+        )
         start = time.time()
         try:
-            response = original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_messages_error(kwargs, e, start, time.time())
-            raise
+            try:
+                response = original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_messages_error(kwargs, e, start, time.time())
+                raise
 
-        if kwargs.get("stream"):
-            return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=False)
+            if kwargs.get("stream"):
+                return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=False, trace_id=trace_id)
 
-        end = time.time()
-        _emit_messages_trace(kwargs, response, start, end, tool_call_latencies)
-        return response
+            end = time.time()
+            _emit_messages_trace(kwargs, response, start, end, tool_call_latencies)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     return wrapped
 
@@ -152,30 +179,41 @@ def _build_async_messages_wrapper(original):
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Anthropic,
+            api="messages",
+            model=kwargs.get("model"),
+            messages=_to_jsonable(kwargs.get("messages")),
+            system=_to_jsonable(kwargs.get("system")),
+        )
         start = time.time()
         try:
-            response = await original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_messages_error(kwargs, e, start, time.time())
-            raise
+            try:
+                response = await original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_messages_error(kwargs, e, start, time.time())
+                raise
 
-        if kwargs.get("stream"):
-            return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=True)
+            if kwargs.get("stream"):
+                return _wrap_messages_stream(response, kwargs, start, tool_call_latencies, async_=True, trace_id=trace_id)
 
-        end = time.time()
-        _emit_messages_trace(kwargs, response, start, end, tool_call_latencies)
-        return response
+            end = time.time()
+            _emit_messages_trace(kwargs, response, start, end, tool_call_latencies)
+            return response
+        finally:
+            pop_llm_trace_id(ctx_tok)
 
     return wrapped
 
 
 class _AnthropicStreamManagerProxy:
-    def __init__(self, manager, kwargs, tool_call_latencies):
+    def __init__(self, manager, kwargs, tool_call_latencies, trace_id=None):
         self._mgr = manager
         self._kwargs = kwargs
         self._tcl = tool_call_latencies
         self._stream = None
         self._start = None
+        self._trace_id = trace_id
 
     def __enter__(self):
         self._start = time.time()
@@ -194,16 +232,22 @@ class _AnthropicStreamManagerProxy:
         except Exception:
             final = getattr(self._stream, "current_message_snapshot", None)
         if final is not None:
-            _emit_messages_trace(self._kwargs, final, self._start, time.time(), self._tcl)
+            tok = push_llm_trace_id(self._trace_id) if self._trace_id else None
+            try:
+                _emit_messages_trace(self._kwargs, final, self._start, time.time(), self._tcl)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
 
 
 class _AsyncAnthropicStreamManagerProxy:
-    def __init__(self, manager, kwargs, tool_call_latencies):
+    def __init__(self, manager, kwargs, tool_call_latencies, trace_id=None):
         self._mgr = manager
         self._kwargs = kwargs
         self._tcl = tool_call_latencies
         self._stream = None
         self._start = None
+        self._trace_id = trace_id
 
     async def __aenter__(self):
         self._start = time.time()
@@ -222,7 +266,12 @@ class _AsyncAnthropicStreamManagerProxy:
         except Exception:
             final = getattr(self._stream, "current_message_snapshot", None)
         if final is not None:
-            _emit_messages_trace(self._kwargs, final, self._start, time.time(), self._tcl)
+            tok = push_llm_trace_id(self._trace_id) if self._trace_id else None
+            try:
+                _emit_messages_trace(self._kwargs, final, self._start, time.time(), self._tcl)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
 
 
 def _build_stream_helper_wrapper(original):
@@ -231,13 +280,23 @@ def _build_stream_helper_wrapper(original):
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Anthropic,
+            api="messages.stream",
+            model=kwargs.get("model"),
+            messages=_to_jsonable(kwargs.get("messages")),
+            system=_to_jsonable(kwargs.get("system")),
+        )
         start = time.time()
         try:
-            manager = original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
-            raise
-        return _AnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies)
+            try:
+                manager = original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+                raise
+            return _AnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies, trace_id=trace_id)
+        finally:
+            pop_llm_trace_id(ctx_tok)
     return wrapped
 
 
@@ -247,13 +306,23 @@ def _build_async_stream_helper_wrapper(original):
             return original(self, *args, **kwargs)
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
+        trace_id, ctx_tok = emit_llm_start(
+            TraceType.Anthropic,
+            api="messages.stream",
+            model=kwargs.get("model"),
+            messages=_to_jsonable(kwargs.get("messages")),
+            system=_to_jsonable(kwargs.get("system")),
+        )
         start = time.time()
         try:
-            manager = original(self, *args, **kwargs)
-        except Exception as e:
-            _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
-            raise
-        return _AsyncAnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies)
+            try:
+                manager = original(self, *args, **kwargs)
+            except Exception as e:
+                _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+                raise
+            return _AsyncAnthropicStreamManagerProxy(manager, kwargs, tool_call_latencies, trace_id=trace_id)
+        finally:
+            pop_llm_trace_id(ctx_tok)
     return wrapped
 
 

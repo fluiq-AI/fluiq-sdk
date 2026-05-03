@@ -10,6 +10,20 @@ from fluiq.integrations.shared.context import (
 )
 
 
+def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
+    payload = LogTrace(
+        trace_id=trace_id,
+        parent_id=parent_id,
+        integration=TraceType.General_Function,
+        function=func_name,
+        type="function",
+        input=str(args) + str(kwargs),
+        status="running",
+        started_at=start,
+    )
+    log_trace(payload.model_dump(mode="json"))
+
+
 def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end):
     success = exc is None
     payload = LogTrace(
@@ -17,10 +31,13 @@ def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
         parent_id=parent_id,
         integration=TraceType.General_Function,
         function=func_name,
+        type="function",
         input=str(args) + str(kwargs),
         output=str(result) if success else str(exc),
         latency=end - start,
         success=success,
+        status="success" if success else "error",
+        started_at=start,
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -32,6 +49,10 @@ def _build_wrapper(func, func_name):
             parent_id = current_parent_id()
             token = push_trace_id(trace_id)
             start = time.time()
+            try:
+                _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+            except Exception:
+                pass
             exc = None
             result = None
             try:
@@ -51,6 +72,10 @@ def _build_wrapper(func, func_name):
         parent_id = current_parent_id()
         token = push_trace_id(trace_id)
         start = time.time()
+        try:
+            _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+        except Exception:
+            pass
         exc = None
         result = None
         try:
