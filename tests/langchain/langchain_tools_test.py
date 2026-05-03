@@ -1,11 +1,10 @@
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument, trace
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
-instrument(api_key="YOUR_KEY")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 
 @tool

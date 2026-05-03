@@ -1,10 +1,9 @@
 from pathlib import Path
 from openai import OpenAI
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument
 
-instrument(api_key="your-fluiq-key")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 client = OpenAI()
 

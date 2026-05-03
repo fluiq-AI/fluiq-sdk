@@ -1,10 +1,9 @@
 import asyncio
 import os
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 import fluiq
 
-fluiq.instrument(api_key="YOUR_KEY")
-load_dotenv()
+fluiq.instrument(api_key=FLUIQ_API_KEY)
 
 from google import genai
 from google.genai import types

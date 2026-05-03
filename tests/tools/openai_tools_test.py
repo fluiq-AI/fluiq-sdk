@@ -1,10 +1,9 @@
 import json
 from openai import OpenAI
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument, trace
 
-instrument(api_key="YOUR_KEY")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 client = OpenAI()
 

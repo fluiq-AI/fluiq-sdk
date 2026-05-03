@@ -1,13 +1,12 @@
 import asyncio
 import os
 from google import genai
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY, GEMINI_KEY
 from fluiq import instrument
 
-instrument(api_key="your-fluiq-key")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
-client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
+client = genai.Client(api_key=GEMINI_KEY)
 
 
 async def main():

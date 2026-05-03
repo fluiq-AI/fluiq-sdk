@@ -2,11 +2,9 @@ import os
 from google import genai
 from google.genai import types
 import fluiq
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 
-fluiq.instrument(api_key="your-fluiq-key")
-
-load_dotenv()
+fluiq.instrument(api_key=FLUIQ_API_KEY)
 
 client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
 

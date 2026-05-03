@@ -1,11 +1,10 @@
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument, trace
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-instrument(api_key="YOUR_KEY")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful assistant that answers in one short sentence."),

@@ -1,10 +1,9 @@
 from openai import OpenAI
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument
 
-instrument(api_key="your-fluiq-key")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 
 class Capital(BaseModel):

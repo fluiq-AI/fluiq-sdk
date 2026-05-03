@@ -12,7 +12,7 @@ import asyncio
 import os
 import time
 
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY, GEMINI_KEY
 from fluiq import instrument
 from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.runners import Runner
@@ -20,9 +20,9 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool
 from google.genai import types
 
-instrument(api_key="fl_zLBKMj9NVmILlOUN32awEuYNso_t45u48ggMPZ-Kkqk")
-load_dotenv()
-os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_KEY"]
+instrument(api_key=FLUIQ_API_KEY)
+
+os.environ["GOOGLE_API_KEY"] = GEMINI_KEY
 
 
 APP_NAME = "fluiq_realtime_demo"

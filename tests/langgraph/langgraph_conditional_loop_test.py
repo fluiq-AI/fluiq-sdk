@@ -1,12 +1,11 @@
 from typing import TypedDict
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
-instrument(api_key="fl_zLBKMj9NVmILlOUN32awEuYNso_t45u48ggMPZ-Kkqk")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 
 class State(TypedDict):

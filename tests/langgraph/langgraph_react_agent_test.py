@@ -1,11 +1,10 @@
-from dotenv import load_dotenv
+from keys import FLUIQ_API_KEY
 from fluiq import instrument
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-instrument(api_key="fl_zLBKMj9NVmILlOUN32awEuYNso_t45u48ggMPZ-Kkqk")
-load_dotenv()
+instrument(api_key=FLUIQ_API_KEY)
 
 
 @tool
