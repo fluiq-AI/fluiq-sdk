@@ -3,7 +3,7 @@ import os
 
 load_dotenv()
 
-ENDPOINT = os.getenv("FLUIQ_API_ENDPOINT","http://localhost:8000/api")
+ENDPOINT = os.getenv("FLUIQ_API_ENDPOINT","https://api.getfluiq.com/api")
 
 _config={
     "api_key": None,

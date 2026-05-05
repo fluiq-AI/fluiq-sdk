@@ -1,8 +1,11 @@
+from fluiq.integrations.shared.safety import _fail_open
+
 MEDIA_PART_TYPES = {
     "image_url", "image", "input_image", "output_image",
     "input_audio", "audio", "output_audio", "video",
 }
 
+@_fail_open
 def _to_jsonable(obj):
     if obj is None:
         return None
@@ -22,6 +25,7 @@ def _to_jsonable(obj):
         return base64.b64encode(obj).decode("ascii")
     return obj
 
+@_fail_open
 def _strip_media(content):
     if content is None:
         return None

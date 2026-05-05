@@ -9,6 +9,7 @@ from fluiq.integrations.shared.context import (
     pop_llm_trace_id,
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
+from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -26,6 +27,7 @@ from fluiq.integrations.Anthropic.helper.streaming import _MessageStreamAccumula
 from fluiq.integrations.OpenAI.helper.streaming import _StreamProxy, _AsyncStreamProxy
 
 
+@_fail_open
 def _emit_messages_trace(kwargs, response, start, end, tool_call_latencies):
     usage = getattr(response, "usage", None)
     content = getattr(response, "content", None)
@@ -65,6 +67,7 @@ def _emit_messages_trace(kwargs, response, start, end, tool_call_latencies):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_messages_stream_trace(kwargs, acc, start, end, tool_call_latencies):
     data = acc.assemble()
     mcp_servers = _extract_mcp_servers(kwargs)
@@ -92,6 +95,7 @@ def _emit_messages_stream_trace(kwargs, acc, start, end, tool_call_latencies):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_messages_error(kwargs, error, start, end, api=None):
     payload = LogTrace(
         type="llm",
@@ -326,6 +330,7 @@ def _build_async_stream_helper_wrapper(original):
     return wrapped
 
 
+@_fail_open
 def _emit_count_tokens_trace(api, kwargs, response, start, end):
     input_tokens = getattr(response, "input_tokens", None)
     payload = LogTrace(

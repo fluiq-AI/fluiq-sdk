@@ -54,9 +54,9 @@ class FluiqCallbackHandler(BaseCallbackHandler):
         state = self._runs.pop(run_id, None) or {}
         return state, time.time()
 
-    def _emit(self, payload):
+    def _emit(self, **fields):
         try:
-            log_trace(payload.model_dump(mode="json"))
+            log_trace(LogTrace(**fields).model_dump(mode="json"))
         except Exception:
             pass
 
@@ -66,7 +66,7 @@ class FluiqCallbackHandler(BaseCallbackHandler):
         kwargs.setdefault("integration", _integration_for(meta))
         if lg is not None:
             kwargs.setdefault("langgraph", lg)
-        self._emit(LogTrace(**kwargs))
+        self._emit(**kwargs)
 
     def _emit_start(self, *, run_id, parent_run_id, metadata, type, **kwargs):
         # Lightweight live-progress signal: same trace_id as the eventual
@@ -84,10 +84,7 @@ class FluiqCallbackHandler(BaseCallbackHandler):
         }
         if lg is not None:
             payload_kwargs.setdefault("langgraph", lg)
-        try:
-            self._emit(LogTrace(**payload_kwargs))
-        except Exception:
-            pass
+        self._emit(**payload_kwargs)
 
     def _parent(self, parent_run_id):
         if parent_run_id:

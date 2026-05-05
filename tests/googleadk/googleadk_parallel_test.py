@@ -8,7 +8,6 @@ from google.genai import types
 import os
 
 instrument(api_key=FLUIQ_API_KEY)
-load_dotenv()
 os.environ["GOOGLE_API_KEY"] = GEMINI_KEY
 
 

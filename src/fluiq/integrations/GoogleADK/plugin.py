@@ -30,9 +30,9 @@ class FluiqADKPlugin(BasePlugin):
         self._agents = {}
         self._tools = {}
 
-    def _emit(self, payload):
+    def _emit(self, **fields):
         try:
-            log_trace(payload.model_dump(mode="json"))
+            log_trace(LogTrace(**fields).model_dump(mode="json"))
         except Exception:
             pass
 
@@ -43,10 +43,7 @@ class FluiqADKPlugin(BasePlugin):
         kwargs.setdefault("integration", TraceType.GoogleADK)
         kwargs.setdefault("status", "running")
         kwargs.setdefault("started_at", time.time())
-        try:
-            self._emit(LogTrace(**kwargs))
-        except Exception:
-            pass
+        self._emit(**kwargs)
 
     @staticmethod
     def _agent_key(agent, callback_context):
@@ -105,7 +102,7 @@ class FluiqADKPlugin(BasePlugin):
             # write to state): fall back to the last LLM response captured
             # under this agent via after_model_callback.
             output = state.get("last_response")
-        self._emit(LogTrace(
+        self._emit(
             type="agent",
             integration=TraceType.GoogleADK,
             function=state.get("agent_name"),
@@ -117,7 +114,7 @@ class FluiqADKPlugin(BasePlugin):
             parent_id=state.get("parent_id"),
             invocation_id=state.get("invocation_id"),
             success=True,
-        ))
+        )
         return None
 
     async def after_model_callback(self, *, callback_context, llm_response):
@@ -163,7 +160,7 @@ class FluiqADKPlugin(BasePlugin):
         end = time.time()
         if state is None:
             return None
-        self._emit(LogTrace(
+        self._emit(
             type="tool",
             integration=TraceType.GoogleADK,
             function=state.get("name"),
@@ -178,7 +175,7 @@ class FluiqADKPlugin(BasePlugin):
             trace_id=state.get("trace_id"),
             parent_id=state.get("parent_id"),
             success=True,
-        ))
+        )
         return None
 
     async def on_tool_error_callback(self, *, tool, tool_args, tool_context, error):
@@ -186,7 +183,7 @@ class FluiqADKPlugin(BasePlugin):
         end = time.time()
         if state is None:
             return None
-        self._emit(LogTrace(
+        self._emit(
             type="tool",
             integration=TraceType.GoogleADK,
             function=state.get("name"),
@@ -197,7 +194,7 @@ class FluiqADKPlugin(BasePlugin):
             trace_id=state.get("trace_id"),
             parent_id=state.get("parent_id"),
             success=False,
-        ))
+        )
         return None
 
     async def on_model_error_callback(self, *, callback_context, llm_request, error):
@@ -211,7 +208,7 @@ class FluiqADKPlugin(BasePlugin):
         key = (_invocation_id(callback_context), getattr(callback_context, "agent_name", None))
         agent_state = self._agents.get(key)
         parent_id = agent_state.get("trace_id") if agent_state else current_parent_id()
-        self._emit(LogTrace(
+        self._emit(
             type="llm",
             integration=TraceType.GoogleADK,
             model=getattr(llm_request, "model", None),
@@ -220,7 +217,7 @@ class FluiqADKPlugin(BasePlugin):
             trace_id=str(uuid.uuid4()),
             parent_id=parent_id,
             success=False,
-        ))
+        )
         return None
 
     async def after_run_callback(self, *, invocation_context):
@@ -240,7 +237,7 @@ class FluiqADKPlugin(BasePlugin):
         for key, state in stale:
             self._agents.pop(key, None)
             pop_trace_id(state.get("_token"))
-            self._emit(LogTrace(
+            self._emit(
                 type="agent",
                 integration=TraceType.GoogleADK,
                 function=state.get("agent_name"),
@@ -252,5 +249,5 @@ class FluiqADKPlugin(BasePlugin):
                 parent_id=state.get("parent_id"),
                 invocation_id=state.get("invocation_id"),
                 success=False,
-            ))
+            )
         return None

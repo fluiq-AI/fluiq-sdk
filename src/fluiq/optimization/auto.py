@@ -34,6 +34,7 @@ from fluiq.optimization.rerankers import (
     MMRReranker,
     RerankResult,
 )
+from fluiq.optimization.rerankers._traced import apply_tracing as _trace_reranker
 
 
 def _instrumentation_active() -> bool:
@@ -71,6 +72,10 @@ class OptimizedRAG:
     prompts: Optional[PromptCache] = None
     documents: DocumentCache = field(default_factory=DocumentCache)
     tools: Optional[ToolCache] = None
+    # ``True`` iff this bundle was built with tracing enabled. Carried on the
+    # bundle so callers / tests can introspect it without re-running the
+    # ``_instrumentation_active()`` heuristic.
+    trace: bool = False
 
     def embed(self, texts: Sequence[str]) -> List[List[float]]:
         if self.embeddings is None:
@@ -251,7 +256,7 @@ def auto_optimize(
             trace=trace,
         )
 
-    documents_cache = DocumentCache(backend=backend, ttl=ttl)
+    documents_cache = DocumentCache(backend=backend, ttl=ttl, trace=trace)
 
     tools_cache = ToolCache(
         tools=tools,
@@ -293,6 +298,12 @@ def auto_optimize(
             f"'cross-encoder', 'mmr', or None."
         )
 
+    # Wrap the reranker (and any composed sub-rerankers inside Hybrid / MMR)
+    # so each rerank call emits a span linked to the surrounding trace,
+    # producing a real reranker subtree in the dashboard.
+    if trace and reranker_obj is not None:
+        reranker_obj = _trace_reranker(reranker_obj)
+
     return OptimizedRAG(
         backend=backend,
         reranker=reranker_obj,
@@ -300,4 +311,5 @@ def auto_optimize(
         prompts=prompts_cache,
         documents=documents_cache,
         tools=tools_cache,
+        trace=bool(trace),
     )

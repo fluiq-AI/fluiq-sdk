@@ -10,6 +10,7 @@ from fluiq.integrations.shared.context import (
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.models import TraceType as _TraceType
+from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -27,6 +28,7 @@ from fluiq.integrations.OpenAI.helper.streaming import (
 )
 
 
+@_fail_open
 def _emit_chat_trace(kwargs, response, start, end, tool_call_latencies):
     usage = getattr(response, "usage", None)
     choices = getattr(response, "choices", None) or []
@@ -65,6 +67,7 @@ def _emit_chat_trace(kwargs, response, start, end, tool_call_latencies):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_chat_stream_trace(kwargs, acc, start, end, tool_call_latencies):
     data = acc.assemble()
     payload = LogTrace(
@@ -87,6 +90,7 @@ def _emit_chat_stream_trace(kwargs, acc, start, end, tool_call_latencies):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_responses_trace(kwargs, response, start, end):
     from fluiq.integrations.OpenAI.helper.mcp_trace import (
         _extract_mcp_servers_from_tools,
@@ -111,6 +115,7 @@ def _emit_responses_trace(kwargs, response, start, end):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_chat_error(kwargs, error, start, end, api="chat.completions"):
     payload = LogTrace(
         type="llm",
@@ -129,6 +134,7 @@ def _emit_chat_error(kwargs, error, start, end, api="chat.completions"):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_responses_error(kwargs, error, start, end, api="responses"):
     payload = LogTrace(
         type="llm",
@@ -146,6 +152,7 @@ def _emit_responses_error(kwargs, error, start, end, api="responses"):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_responses_stream_trace(kwargs, acc, start, end):
     from fluiq.integrations.OpenAI.helper.mcp_trace import (
         _extract_mcp_servers_from_tools,

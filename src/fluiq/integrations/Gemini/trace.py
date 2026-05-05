@@ -9,6 +9,7 @@ from fluiq.integrations.shared.context import (
     pop_llm_trace_id,
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
+from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.Gemini.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.Gemini.helper.tool_trace import (
     _extract_function_calls,
@@ -33,6 +34,7 @@ def _usage_dict(usage):
         "total": getattr(usage, "total_token_count", None),
     }
 
+@_fail_open
 def _emit_genai_trace(kwargs, response, start, end):
     usage = getattr(response, "usage_metadata", None)
     candidates = getattr(response, "candidates", None)
@@ -68,6 +70,7 @@ def _emit_genai_trace(kwargs, response, start, end):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_genai_error(kwargs, error, start, end, api=None, model=None):
     payload = LogTrace(
         type="llm",
@@ -240,6 +243,7 @@ def patch_genai_stream_async():
 
     AsyncModels.generate_content_stream = wrapped
 
+@_fail_open
 def _emit_vertex_trace(self, kwargs, request_contents, response, start, end, tool_call_latencies):
     usage = getattr(response, "usage_metadata", None)
     candidates = getattr(response, "candidates", None)
@@ -329,6 +333,7 @@ async def _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_
                         pop_llm_trace_id(tok)
 
 
+@_fail_open
 def _emit_vertex_error(self, kwargs, request_contents, error, start, end):
     model = getattr(self, "_model_name", None) or getattr(self, "model_name", None)
     payload = LogTrace(
@@ -425,6 +430,7 @@ def patch_vertexai_async():
     GenerativeModel.generate_content_async = wrapped
 
 
+@_fail_open
 def _emit_count_tokens_trace(integration, kwargs, contents, response, start, end, model=None):
     total = getattr(response, "total_tokens", None)
     payload = LogTrace(
@@ -441,6 +447,7 @@ def _emit_count_tokens_trace(integration, kwargs, contents, response, start, end
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit_count_tokens_error(integration, kwargs, contents, error, start, end, model=None):
     payload = LogTrace(
         type="llm",

@@ -8,8 +8,10 @@ from fluiq.integrations.shared.context import (
     push_trace_id,
     pop_trace_id,
 )
+from fluiq.integrations.shared.safety import _fail_open
 
 
+@_fail_open
 def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
     payload = LogTrace(
         trace_id=trace_id,
@@ -24,6 +26,7 @@ def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
     log_trace(payload.model_dump(mode="json"))
 
 
+@_fail_open
 def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end):
     success = exc is None
     payload = LogTrace(
