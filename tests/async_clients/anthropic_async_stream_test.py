@@ -1,9 +1,9 @@
 import asyncio
 import anthropic
-from keys import FLUIQ_API_KEY
+from tests.keys import FLUIQ_API_KEY
 from fluiq import instrument
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 client = anthropic.AsyncAnthropic()
 

@@ -1,5 +1,5 @@
 import asyncio
-from keys import FLUIQ_API_KEY, GEMINI_KEY
+from ..keys import FLUIQ_API_KEY, GEMINI_KEY
 from fluiq import instrument
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -8,7 +8,7 @@ from google.adk.tools import FunctionTool
 from google.genai import types
 import os
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 os.environ["GOOGLE_API_KEY"] = GEMINI_KEY
 

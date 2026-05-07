@@ -1,10 +1,9 @@
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 from fluiq import instrument, trace
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-instrument(api_key=FLUIQ_API_KEY)
-
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 llm = ChatOpenAI(model="gpt-4o")
 
 

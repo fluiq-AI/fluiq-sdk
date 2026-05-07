@@ -1,9 +1,9 @@
 from fluiq import instrument, trace
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 llm = ChatOllama(model="llama3.1:8b")
 

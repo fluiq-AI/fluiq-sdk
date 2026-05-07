@@ -1,11 +1,11 @@
 from typing import TypedDict
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 import fluiq
 
-fluiq.instrument(api_key=FLUIQ_API_KEY)
+fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 class State(TypedDict):
     question: str

@@ -13,6 +13,10 @@ from unittest.mock import patch
 
 import requests
 
+from fluiq import instrument
+from ..keys import FLUIQ_API_KEY
+
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 def _install_fake_openai():
     """Plant the minimum module tree that patch_openai() imports from."""

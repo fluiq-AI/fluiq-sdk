@@ -1,10 +1,10 @@
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 from fluiq import instrument
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 
 @tool

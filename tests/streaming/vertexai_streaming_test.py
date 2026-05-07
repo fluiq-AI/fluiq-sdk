@@ -1,10 +1,10 @@
 import os
 import vertexai
 from vertexai.generative_models import GenerativeModel
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 from fluiq import instrument
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 vertexai.init(project=os.getenv("GCP_PROJECT"), location=os.getenv("GCP_LOCATION", "us-central1"))
 

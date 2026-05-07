@@ -10,15 +10,17 @@ Run:  python -m unittest tests.basic.test_optimization_trace_tree
 import unittest
 from unittest.mock import patch
 
-from fluiq import trace
+from fluiq import trace, instrument
 from fluiq.optimization import auto_optimize
 from fluiq.optimization.rerankers import (
     BM25Reranker,
     HybridReranker,
     MMRReranker,
 )
+from ..keys import FLUIQ_API_KEY
 from fluiq.optimization.rerankers._traced import TracedReranker, apply_tracing
 
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 def _capture_events():
     """Patch ``send_event`` and return the list events get appended to."""

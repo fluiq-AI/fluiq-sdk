@@ -1,9 +1,9 @@
 import json
 from openai import OpenAI
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 from fluiq import instrument, trace
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 client = OpenAI()
 

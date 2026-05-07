@@ -2,9 +2,9 @@ import os
 from google import genai
 from google.genai import types
 import fluiq
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 
-fluiq.instrument(api_key=FLUIQ_API_KEY)
+fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
 

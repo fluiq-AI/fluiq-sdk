@@ -6,9 +6,10 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool, ToolContext
 from google.genai import types
 import os
-from keys import FLUIQ_API_KEY, GEMINI_KEY
+from ..keys import FLUIQ_API_KEY, GEMINI_KEY
 
-instrument(api_key=FLUIQ_API_KEY)
+instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
+
 os.environ["GOOGLE_API_KEY"] = GEMINI_KEY
 
 APP_NAME = "fluiq_loop_demo"

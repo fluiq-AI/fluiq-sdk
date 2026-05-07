@@ -1,8 +1,8 @@
 import os
-from keys import FLUIQ_API_KEY
+from ..keys import FLUIQ_API_KEY
 import fluiq
 
-fluiq.instrument(api_key=FLUIQ_API_KEY)
+fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
 
 from google import genai
 from google.genai import types
