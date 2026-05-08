@@ -12,6 +12,7 @@ class TraceType(str, Enum):
     LlamaIndex: str = "LLAMAINDEX"
     CrewAI: str = "CREWAI"
     GoogleADK: str = "GOOGLEADK"
+    AutoGen: str = "AUTOGEN"
     AgentToAgent: str = "AGENTTOAGENT"
     ChromaDB: str = "CHROMADB"
     Pinecone: str = "PINECONE"

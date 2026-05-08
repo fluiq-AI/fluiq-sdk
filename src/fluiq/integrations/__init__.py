@@ -43,6 +43,8 @@ def init():
 
     _safe("fluiq.integrations.LangGraph.trace", "patch_langgraph")
 
+    _safe("fluiq.integrations.CrewAI.trace", "patch_crewai")
+
     _safe("fluiq.integrations.GoogleADK.trace", "patch_google_adk")
 
     _safe("fluiq.integrations.Vectorstores.Chromadb.trace", "patch_chromadb")
