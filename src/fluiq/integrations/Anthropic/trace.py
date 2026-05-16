@@ -10,6 +10,8 @@ from fluiq.integrations.shared.context import (
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.safety import _fail_open
+from fluiq.integrations.shared.security_gate import pre_call_guard
+from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -157,6 +159,26 @@ def _build_messages_wrapper(original):
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "anthropic")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.Anthropic.value,
+                    "api": "messages",
+                    "model": kwargs.get("model"),
+                    "messages": _to_jsonable(kwargs.get("messages")),
+                    "system": _to_jsonable(kwargs.get("system")),
+                    "response": cached.content[0].text,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -192,6 +214,26 @@ def _build_async_messages_wrapper(original):
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "anthropic")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.Anthropic.value,
+                    "api": "messages",
+                    "model": kwargs.get("model"),
+                    "messages": _to_jsonable(kwargs.get("messages")),
+                    "system": _to_jsonable(kwargs.get("system")),
+                    "response": cached.content[0].text,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:

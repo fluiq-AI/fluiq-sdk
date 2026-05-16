@@ -12,7 +12,7 @@ from fluiq.integrations.shared.safety import _fail_open
 
 
 @_fail_open
-def _emit_start(trace_id, parent_id, func_name, args, kwargs, start, security_scan:bool):
+def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
     payload = LogTrace(
         trace_id=trace_id,
         parent_id=parent_id,
@@ -21,32 +21,13 @@ def _emit_start(trace_id, parent_id, func_name, args, kwargs, start, security_sc
         type="function",
         input=str(args) + str(kwargs),
         status="running",
-        started_at=start
+        started_at=start,
     )
-    data = payload.model_dump(mode="json")
-    if security_scan:
-        try:
-            from security.enricher import SecurityEnricher
-            enricher = SecurityEnricher()
-            data = enricher.enrich(data)
-        except Exception:
-            pass
-    log_trace(data)
+    log_trace(payload.model_dump(mode="json"))
 
 
 @_fail_open
-def _emit(
-    trace_id, 
-    parent_id, 
-    func_name, 
-    args, 
-    kwargs, 
-    result, 
-    exc, 
-    start, 
-    end,
-    security_scan:bool
-    ):
+def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end):
     success = exc is None
     payload = LogTrace(
         trace_id=trace_id,
@@ -61,13 +42,10 @@ def _emit(
         status="success" if success else "error",
         started_at=start,
     )
-    data = payload.model_dump(mode="json")
-    if not security_scan:
-        data["_security_scan"] = False
-    log_trace(data)
+    log_trace(payload.model_dump(mode="json"))
 
 
-def _build_wrapper(func, func_name: str, security_scan:bool):
+def _build_wrapper(func, func_name: str):
     if asyncio.iscoroutinefunction(func):
         async def async_wrapper(*args, **kwargs):
             trace_id = str(uuid.uuid4())
@@ -75,7 +53,7 @@ def _build_wrapper(func, func_name: str, security_scan:bool):
             token = push_trace_id(trace_id)
             start = time.time()
             try:
-                _emit_start(trace_id, parent_id, func_name, args, kwargs, start, security_scan)
+                _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
             except Exception:
                 pass
             exc = None
@@ -86,7 +64,7 @@ def _build_wrapper(func, func_name: str, security_scan:bool):
                 exc = e
             end = time.time()
             pop_trace_id(token)
-            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, security_scan)
+            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
             if exc is not None:
                 raise exc
             return result
@@ -100,7 +78,7 @@ def _build_wrapper(func, func_name: str, security_scan:bool):
         token = push_trace_id(trace_id)
         start = time.time()
         try:
-            _emit_start(trace_id, parent_id, func_name, args, kwargs, start, security_scan)
+            _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
         except Exception:
             pass
         exc = None
@@ -111,7 +89,7 @@ def _build_wrapper(func, func_name: str, security_scan:bool):
             exc = e
         end = time.time()
         pop_trace_id(token)
-        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, security_scan)
+        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end)
         if exc is not None:
             raise exc
         return result
@@ -121,11 +99,11 @@ def _build_wrapper(func, func_name: str, security_scan:bool):
     return wrapper
 
 
-def trace(func=None, *, name=None, security_scan:bool=True):
+def trace(func=None, *, name=None):
     if func is not None and callable(func):
-        return _build_wrapper(func, name or func.__name__, security_scan)
+        return _build_wrapper(func, name or func.__name__)
 
     def decorator(f):
-        return _build_wrapper(f, name or f.__name__, security_scan)
+        return _build_wrapper(f, name or f.__name__)
 
     return decorator

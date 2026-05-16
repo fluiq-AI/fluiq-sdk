@@ -12,17 +12,21 @@ _config={
     "enabled": True,
     "version": "v1",
     "endpoint": ENDPOINT,
-    "security_scan": True,
+    "secure": False,
+    "secure_mode": "warn",      # "warn" | "block"
+    "optimize": False,
+    "optimize_mode": "cache",    # "cache" | "observe"
+    "eval": False,
+    "eval_mode": "warn",         # "warn" | "block"
+    "eval_metrics": None,        # None → SDK default; or explicit list
+    "eval_thresholds": {},       # {"hallucination": 0.8, ...}
+    "eval_judge_model": "gpt-4o-mini",
 }
 
-def init(
-        api_key: str=API_KEY, version=VERSION, 
-        endpoint: str=ENDPOINT, security_scan: bool = True
-    ):
-    _config["api_key"] = api_key
-    _config["version"] = version
+def init(api_key: str = API_KEY, version: str = VERSION, endpoint: str = ENDPOINT):
+    _config["api_key"]  = api_key
+    _config["version"]  = version
     _config["endpoint"] = endpoint
-    _config["security_scan"] = security_scan
 
     from fluiq.integrations import init as _integration_init_
     _integration_init_()

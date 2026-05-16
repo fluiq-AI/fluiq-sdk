@@ -11,6 +11,8 @@ from fluiq.integrations.shared.context import (
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.models import TraceType as _TraceType
 from fluiq.integrations.shared.safety import _fail_open
+from fluiq.integrations.shared.security_gate import pre_call_guard
+from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -250,6 +252,25 @@ def patch_openai():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "openai")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": _TraceType.OpenAI.value,
+                    "api": "chat.completions",
+                    "model": kwargs.get("model"),
+                    "messages": _to_jsonable(kwargs.get("messages")),
+                    "response": cached.choices[0].message.content,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -288,6 +309,25 @@ def patch_openai_async():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "openai")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": _TraceType.OpenAI.value,
+                    "api": "chat.completions",
+                    "model": kwargs.get("model"),
+                    "messages": _to_jsonable(kwargs.get("messages")),
+                    "response": cached.choices[0].message.content,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -321,6 +361,7 @@ def patch_openai_responses():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -354,6 +395,7 @@ def patch_openai_responses_async():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -459,6 +501,7 @@ def patch_openai_parse():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -492,6 +535,7 @@ def patch_openai_parse_async():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:

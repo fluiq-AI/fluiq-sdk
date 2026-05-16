@@ -1,15 +1,9 @@
-"""fluiq.security — PII, injection, and secret scanning for Fluiq traces."""
+"""fluiq.security — server-side security scanning via fluiq.secure().
 
-from .pii_scanner import FluiqPIIScanner, PIIResult, RiskLevel
-from .injection_scanner import FluiqInjectionScanner, InjectionResult
-from .secret_scanner import FluiqSecretScanner, SecretResult
+Local scanners have been removed. All detection runs on the Fluiq backend
+so patterns are never shipped in the public SDK.  Call fluiq.secure() after
+fluiq.instrument() to activate scanning (requires Team plan or above).
+"""
+from fluiq.security.client import call_secure, pre_call_check
 
-__all__ = [
-    "FluiqPIIScanner",
-    "PIIResult",
-    "RiskLevel",
-    "FluiqInjectionScanner",
-    "InjectionResult",
-    "FluiqSecretScanner",
-    "SecretResult",
-]
+__all__ = ["call_secure", "pre_call_check"]

@@ -10,6 +10,8 @@ from fluiq.integrations.shared.context import (
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.safety import _fail_open
+from fluiq.integrations.shared.security_gate import pre_call_guard
+from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.Gemini.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.Gemini.helper.tool_trace import (
     _extract_function_calls,
@@ -105,6 +107,25 @@ def patch_genai():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "gemini")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.Gemini.value,
+                    "api": "generate_content",
+                    "model": kwargs.get("model"),
+                    "contents": _to_jsonable(kwargs.get("contents")),
+                    "response": cached.candidates[0].content.parts[0].text,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -137,6 +158,25 @@ def patch_genai_async():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
+
+            cached = pre_call_optimize(kwargs, "gemini")
+            if cached is not None:
+                end = time.time()
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.Gemini.value,
+                    "api": "generate_content",
+                    "model": kwargs.get("model"),
+                    "contents": _to_jsonable(kwargs.get("contents")),
+                    "response": cached.candidates[0].content.parts[0].text,
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -371,6 +411,7 @@ def patch_vertexai():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -412,6 +453,7 @@ def patch_vertexai_async():
         )
         start = time.time()
         try:
+            pre_call_guard(kwargs)
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
