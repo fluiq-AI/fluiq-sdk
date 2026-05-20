@@ -9,7 +9,6 @@ from fluiq.integrations.shared.context import (
     pop_llm_trace_id,
 )
 from fluiq.integrations.shared.llm_start import emit_llm_start
-from fluiq.integrations.shared.models import TraceType as _TraceType
 from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.shared.security_gate import pre_call_guard
 from fluiq.integrations.shared.optimize_gate import pre_call_optimize
@@ -232,6 +231,66 @@ def _wrap_responses_stream(stream, kwargs, start, async_=False, trace_id=None):
     return Proxy(stream, on_chunk, on_end, on_error=on_error)
 
 
+def _emit_security_blocked_trace(kwargs: dict, exc: "Exception", start: float, end: float, api: str = "chat.completions") -> None:
+    """Emit a trace for a call that was blocked by fluiq.secure(mode='block').
+
+    The pre-call check fires before the LLM API call, so there is no response.
+    Security fields are populated directly from the FluiqSecurityError so the
+    dashboard's SecurityPanel can render the block without a second /secure call.
+    """
+    if api == "responses":
+        payload = LogTrace(
+            type="llm",
+            integration=TraceType.OpenAI,
+            api=api,
+            model=kwargs.get("model"),
+            input=_to_jsonable(kwargs.get("input")),
+            tools=_to_jsonable(kwargs.get("tools")),
+            latency=end - start,
+            parent_id=current_parent_id(),
+            success=False,
+        )
+    else:
+        payload = LogTrace(
+            type="llm",
+            integration=TraceType.OpenAI,
+            api=api,
+            model=kwargs.get("model"),
+            messages=_to_jsonable(kwargs.get("messages")),
+            tools=_to_jsonable(kwargs.get("tools")),
+            tool_choice=_to_jsonable(kwargs.get("tool_choice")),
+            latency=end - start,
+            parent_id=current_parent_id(),
+            success=False,
+        )
+    attack_types = getattr(exc, "attack_types", [])
+    data = payload.model_dump(mode="json")
+    data.update({
+        "_security_pre_blocked":        True,
+        "status":                       "blocked",
+        "security_risk_level":          getattr(exc, "risk_level", "high"),
+        "security_risk_score":          1.0,
+        "should_block":                 True,
+        "block_reason":                 getattr(exc, "block_reason", str(exc)),
+        "injection_detected":           "prompt_injection" in attack_types,
+        "injection_patterns":           ["prompt_injection"] if "prompt_injection" in attack_types else [],
+        "jailbreak_detected":           "jailbreak"         in attack_types,
+        "jailbreak_patterns":           ["jailbreak"]        if "jailbreak"         in attack_types else [],
+        "skeleton_key_detected":        "skeleton_key"      in attack_types,
+        "skeleton_key_patterns":        ["skeleton_key"]     if "skeleton_key"      in attack_types else [],
+        "secrets_detected":             False,
+        "secret_types":                 [],
+        "pii_entities_prompt":          [],
+        "pii_entities_response":        [],
+        "prompt_redacted":              "",
+        "response_redacted":            "",
+        "indirect_injection_detected":  False,
+        "indirect_injection_sources":   [],
+        "semantic_attack_score":        0.0,
+    })
+    log_trace(data)
+
+
 def patch_openai():
     from openai.resources.chat.completions import Completions
 
@@ -245,25 +304,37 @@ def patch_openai():
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions")
+                raise
 
             cached = pre_call_optimize(kwargs, "openai")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
                 log_trace({
                     "type": "llm",
-                    "integration": _TraceType.OpenAI.value,
+                    "integration": TraceType.OpenAI.value,
                     "api": "chat.completions",
                     "model": kwargs.get("model"),
                     "messages": _to_jsonable(kwargs.get("messages")),
-                    "response": cached.choices[0].message.content,
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "tool_calls": _payload.get("tool_calls"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,
@@ -302,25 +373,37 @@ def patch_openai_async():
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
 
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions")
+                raise
 
             cached = pre_call_optimize(kwargs, "openai")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
                 log_trace({
                     "type": "llm",
-                    "integration": _TraceType.OpenAI.value,
+                    "integration": TraceType.OpenAI.value,
                     "api": "chat.completions",
                     "model": kwargs.get("model"),
                     "messages": _to_jsonable(kwargs.get("messages")),
-                    "response": cached.choices[0].message.content,
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "tool_calls": _payload.get("tool_calls"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,
@@ -354,14 +437,43 @@ def patch_openai_responses():
         if is_in_langchain_llm():
             return original(self, *args, **kwargs)
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="responses",
             model=kwargs.get("model"),
             input=_to_jsonable(kwargs.get("input")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="responses")
+                raise
+
+            cached = pre_call_optimize(kwargs, "openai_responses")
+            if cached is not None:
+                end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.OpenAI.value,
+                    "api": "responses",
+                    "model": kwargs.get("model"),
+                    "input": _to_jsonable(kwargs.get("input")),
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -388,14 +500,43 @@ def patch_openai_responses_async():
         if is_in_langchain_llm():
             return await original(self, *args, **kwargs)
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="responses",
             model=kwargs.get("model"),
             input=_to_jsonable(kwargs.get("input")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="responses")
+                raise
+
+            cached = pre_call_optimize(kwargs, "openai_responses")
+            if cached is not None:
+                end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
+                log_trace({
+                    "type": "llm",
+                    "integration": TraceType.OpenAI.value,
+                    "api": "responses",
+                    "model": kwargs.get("model"),
+                    "input": _to_jsonable(kwargs.get("input")),
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
+                    "latency": end - start,
+                    "parent_id": current_parent_id(),
+                    "_cache_hit": True,
+                    "tokens": None,
+                })
+                return cached
+
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -494,14 +635,20 @@ def patch_openai_parse():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions.parse",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions.parse")
+                raise
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -528,14 +675,20 @@ def patch_openai_parse_async():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions.parse",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
         )
         start = time.time()
         try:
-            pre_call_guard(kwargs)
+            try:
+                pre_call_guard(kwargs)
+            except Exception as sec_exc:
+                from fluiq.exceptions import FluiqSecurityError
+                if isinstance(sec_exc, FluiqSecurityError):
+                    _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions.parse")
+                raise
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -562,7 +715,7 @@ def patch_openai_stream_helper():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions.stream",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),
@@ -593,7 +746,7 @@ def patch_openai_stream_helper_async():
         _gc_pending_tool_calls()
         tool_call_latencies = _compute_tool_call_latencies(kwargs.get("messages"))
         trace_id, ctx_tok = emit_llm_start(
-            _TraceType.OpenAI,
+            TraceType.OpenAI,
             api="chat.completions.stream",
             model=kwargs.get("model"),
             messages=_to_jsonable(kwargs.get("messages")),

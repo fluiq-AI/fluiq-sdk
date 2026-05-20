@@ -1,11 +1,11 @@
-"""Thin SDK client for the fluiq-api /evaluate endpoint.
+"""Thin SDK client for block-mode evaluation.
 
-call_evaluate() — post-call: sends prompt + response to the Fluiq backend,
-which runs LLM-as-judge and stores results in ClickHouse.  Returns a
-{metric: score} dict, or None on any network / server error.
+call_evaluate_block() — synchronously calls /evaluate and returns
+{metric: score} or None. Only used in block mode; warn-mode evaluation
+is handled entirely server-side via the Kafka → worker pipeline.
 
-Never raises — all failures are logged and swallowed so the user's
-application is never interrupted by observability infrastructure.
+Never raises — failures are logged and swallowed. The caller in tracer.py
+inspects the returned scores and raises FluiqEvalError when appropriate.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _extract_question(trace: dict[str, Any]) -> str:
         for msg in reversed(messages):
             if isinstance(msg, dict) and msg.get("role") == "user":
                 content = msg.get("content") or ""
-                if isinstance(content, str):
+                if isinstance(content, str) and content.strip():
                     return content
         parts = [
             str(m.get("content") or "")
@@ -36,17 +36,14 @@ def _extract_question(trace: dict[str, Any]) -> str:
             if isinstance(m, dict) and m.get("content")
         ]
         return "\n".join(parts)
-    return str(messages)
+    return str(messages) if messages else ""
 
 
-def call_evaluate(trace: dict[str, Any]) -> dict[str, float] | None:
-    """POST trace data to /evaluate, return ``{metric: score}`` or ``None``.
-
-    Called from ``tracer.log_trace()`` when ``fluiq.eval()`` is active.
-    """
+def call_evaluate_block(trace: dict[str, Any]) -> dict[str, float] | None:
+    """POST trace to /evaluate and return {metric: score} or None (block mode only)."""
     try:
-        metrics    = _config.get("eval_metrics") or ["hallucination", "relevance"]
-        judge_model = _config.get("eval_judge_model", "gpt-4o-mini")
+        metrics     = _config.get("eval_metrics") or ["hallucination", "relevance"]
+        judge_model = _config.get("eval_judge_model", "claude-haiku-4-5-20251001")
         thresholds  = _config.get("eval_thresholds", {})
 
         base = f"{_config['endpoint']}/{_config['version']}"
@@ -55,7 +52,7 @@ def call_evaluate(trace: dict[str, Any]) -> dict[str, float] | None:
             json={
                 "api_key":     _config["api_key"],
                 "trace_id":    trace.get("trace_id"),
-                "model":       trace.get("model", ""),
+                "model":       trace.get("model") or "",
                 "prompt":      _extract_question(trace),
                 "response":    trace.get("response") or trace.get("output") or "",
                 "context":     "",
@@ -70,5 +67,5 @@ def call_evaluate(trace: dict[str, Any]) -> dict[str, float] | None:
         logger.warning("[fluiq.eval] /evaluate returned HTTP %s", r.status_code)
         return None
     except Exception as exc:
-        logger.warning("[fluiq.eval] evaluation failed: %s", repr(exc))
+        logger.warning("[fluiq.eval] block-mode evaluation failed: %s", repr(exc))
         return None

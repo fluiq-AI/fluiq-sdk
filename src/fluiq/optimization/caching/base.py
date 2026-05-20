@@ -47,4 +47,11 @@ def _normalize(v: Any) -> Any:
         return [_normalize(x) for x in v]
     if isinstance(v, dict):
         return {str(k): _normalize(v[k]) for k in sorted(v.keys(), key=str)}
+    # Pydantic models (Anthropic, OpenAI SDK objects) — stable dict representation
+    if hasattr(v, "model_dump"):
+        return _normalize(v.model_dump())
+    # SimpleNamespace, dataclasses, other plain objects
+    d = getattr(v, "__dict__", None)
+    if d is not None:
+        return _normalize(d)
     return str(v)

@@ -55,7 +55,7 @@ def eval(
     thresholds: dict | None = None,
     metrics: list[str] | None = None,
     mode: str = "warn",
-    judge_model: str = "gpt-4o-mini",
+    judge_model: str = "claude-haiku-4-5-20251001",
 ) -> None:
     """Activate server-side LLM response evaluation.
 
@@ -85,7 +85,7 @@ def eval(
         ``FluiqEvalError`` when any metric fails, preventing the response
         from reaching your application.
     judge_model : str
-        The model Fluiq uses as judge. Defaults to ``"gpt-4o-mini"``.
+        The model Fluiq uses as judge. Defaults to ``"claude-haiku-4-5-20251001"``.
     """
     if mode not in ("warn", "block"):
         raise ValueError(f"fluiq.eval() mode must be 'warn' or 'block', got {mode!r}")

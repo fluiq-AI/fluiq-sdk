@@ -1,16 +1,31 @@
 from typing import Any
 
+from types import SimpleNamespace
+
 from fluiq.integrations.shared.models import TraceType
 from fluiq.integrations.Vectorstores.shared.utils import (
     _build_match,
     _capture_matches,
     _safe_jsonable,
     _truncate_ids,
-    _vector_count_and_dim,
     _vector_dim,
+    make_async_cached_wrapper,
+    make_async_invalidating_wrapper,
     make_async_wrapper,
+    make_sync_cached_wrapper,
+    make_sync_invalidating_wrapper,
     make_sync_wrapper,
 )
+from fluiq.optimization.client import vectorstore_cache_key
+
+
+def _pinecone_target(args, kwargs, instance) -> str:
+    return (
+        getattr(instance, "name", None)
+        or getattr(instance, "_index_name", None)
+        or getattr(getattr(instance, "config", None), "name", None)
+        or ""
+    )
 
 
 def _target(instance, kwargs) -> dict:
@@ -161,50 +176,112 @@ def _summarize_update(args, kwargs, instance, response=None) -> dict:
     }
 
 
-_OPS = (
-    ("query", "query", _summarize_query),
+def _query_cache_key(args, kwargs, instance) -> str:
+    idx = (
+        getattr(instance, "name", None)
+        or getattr(instance, "_index_name", None)
+        or getattr(getattr(instance, "config", None), "name", None)
+        or ""
+    )
+    return vectorstore_cache_key(
+        "pinecone",
+        idx,
+        kwargs.get("vector") or kwargs.get("id"),
+        kwargs.get("top_k"),
+        kwargs.get("filter"),
+    )
+
+
+def _query_mock(cached_result: dict, args, kwargs, instance):
+    items = (cached_result.get("matches") or {}).get("items") or []
+    matches = [
+        SimpleNamespace(
+            id=m.get("id", ""),
+            score=m.get("score"),
+            metadata=m.get("metadata"),
+            values=[],
+            sparse_values=None,
+        )
+        for m in items
+    ]
+    return SimpleNamespace(
+        matches=matches,
+        namespace=kwargs.get("namespace", ""),
+        usage=None,
+    )
+
+
+# upsert/update/delete mutate the index → invalidate query cache
+_INVALIDATING_OPS = (
     ("upsert", "upsert", _summarize_upsert),
-    ("fetch", "fetch", _summarize_fetch),
-    ("delete", "delete", _summarize_delete),
     ("update", "update", _summarize_update),
+    ("delete", "delete", _summarize_delete),
 )
+# fetch is read-only — no invalidation needed
+_PLAIN_OPS = (("fetch", "fetch", _summarize_fetch),)
 
 
 def _patch_class_sync(cls):
-    for attr, api, summarize in _OPS:
+    if hasattr(cls, "query"):
+        setattr(
+            cls, "query",
+            make_sync_cached_wrapper(
+                cls.query, TraceType.Pinecone, "query",
+                _summarize_query, _query_cache_key, _query_mock,
+            ),
+        )
+    for attr, api, summarize in _INVALIDATING_OPS:
         if hasattr(cls, attr):
-            setattr(
-                cls, attr,
-                make_sync_wrapper(getattr(cls, attr), TraceType.Pinecone, api, summarize),
-            )
+            setattr(cls, attr, make_sync_invalidating_wrapper(
+                getattr(cls, attr), TraceType.Pinecone, api, summarize, _pinecone_target,
+            ))
+    for attr, api, summarize in _PLAIN_OPS:
+        if hasattr(cls, attr):
+            setattr(cls, attr, make_sync_wrapper(getattr(cls, attr), TraceType.Pinecone, api, summarize))
 
 
 def _patch_class_async(cls):
-    for attr, api, summarize in _OPS:
+    if hasattr(cls, "query"):
+        setattr(
+            cls, "query",
+            make_async_cached_wrapper(
+                cls.query, TraceType.Pinecone, "query",
+                _summarize_query, _query_cache_key, _query_mock,
+            ),
+        )
+    for attr, api, summarize in _INVALIDATING_OPS:
         if hasattr(cls, attr):
-            setattr(
-                cls, attr,
-                make_async_wrapper(getattr(cls, attr), TraceType.Pinecone, api, summarize),
-            )
+            setattr(cls, attr, make_async_invalidating_wrapper(
+                getattr(cls, attr), TraceType.Pinecone, api, summarize, _pinecone_target,
+            ))
+    for attr, api, summarize in _PLAIN_OPS:
+        if hasattr(cls, attr):
+            setattr(cls, attr, make_async_wrapper(getattr(cls, attr), TraceType.Pinecone, api, summarize))
 
 
 def patch_pinecone():
     try:
-        from pinecone.data.index import Index
+        from pinecone.index import Index
     except Exception:
         try:
-            from pinecone import Index  # type: ignore
+            from pinecone.data.index import Index  # type: ignore[no-redef]
         except Exception:
-            return
+            try:
+                from pinecone import Index  # type: ignore[no-redef]
+            except Exception:
+                return
     _patch_class_sync(Index)
 
 
 def patch_pinecone_async():
     try:
-        from pinecone.data.index_asyncio import _IndexAsyncio as IndexAsyncio
+        from pinecone.async_client import AsyncIndex
     except Exception:
         try:
-            from pinecone import IndexAsyncio  # type: ignore
+            from pinecone.data.index_asyncio import _IndexAsyncio as AsyncIndex  # type: ignore[no-redef]
         except Exception:
-            return
-    _patch_class_async(IndexAsyncio)
+            try:
+                from pinecone import AsyncIndex  # type: ignore[no-redef]
+            except Exception:
+                return
+    _patch_class_async(AsyncIndex)

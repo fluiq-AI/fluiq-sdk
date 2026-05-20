@@ -1,5 +1,7 @@
 from typing import Any
 
+from types import SimpleNamespace
+
 from fluiq.integrations.shared.models import TraceType
 from fluiq.integrations.Vectorstores.shared.utils import (
     _build_match,
@@ -7,11 +9,15 @@ from fluiq.integrations.Vectorstores.shared.utils import (
     _capture_query_texts,
     _safe_jsonable,
     _truncate_ids,
-    _vector_count_and_dim,
     _vector_dim,
+    make_async_cached_wrapper,
+    make_async_invalidating_wrapper,
     make_async_wrapper,
+    make_sync_cached_wrapper,
+    make_sync_invalidating_wrapper,
     make_sync_wrapper,
 )
+from fluiq.optimization.client import vectorstore_cache_key
 
 
 def _properties_text(props: Any) -> Any:
@@ -267,12 +273,61 @@ def _summarize_update(args, kwargs, instance, response=None) -> dict:
 
 
 
+def _collection_name(instance) -> str:
+    return (
+        getattr(instance, "name", None)
+        or getattr(instance, "_name", None)  # _BaseExecutor stores name as _name
+        or getattr(getattr(instance, "_collection", None), "name", None)
+        or getattr(getattr(instance, "_executor", None), "name", None)
+        or ""
+    )
+
+
+def _near_vector_key(args, kwargs, instance) -> str:
+    vec = kwargs.get("near_vector") or (args[0] if args else None)
+    target = kwargs.get("target_vector")
+    return vectorstore_cache_key("weaviate", _collection_name(instance), vec, kwargs.get("limit"), (kwargs.get("filters"), target))
+
+
+def _near_text_key(args, kwargs, instance) -> str:
+    q = kwargs.get("query") or (args[0] if args else None)
+    return vectorstore_cache_key("weaviate", _collection_name(instance), q, kwargs.get("limit"), kwargs.get("filters"))
+
+
+def _hybrid_key(args, kwargs, instance) -> str:
+    q = kwargs.get("query") or (args[0] if args else None)
+    return vectorstore_cache_key("weaviate", _collection_name(instance), q, kwargs.get("limit"), kwargs.get("filters"))
+
+
+def _bm25_key(args, kwargs, instance) -> str:
+    q = kwargs.get("query") or (args[0] if args else None)
+    return vectorstore_cache_key("weaviate", _collection_name(instance), q, kwargs.get("limit"), kwargs.get("filters"))
+
+
+def _fetch_objects_key(args, kwargs, instance) -> str:
+    return vectorstore_cache_key("weaviate", _collection_name(instance), None, kwargs.get("limit"), kwargs.get("filters"))
+
+
+def _objects_mock(cached_result: dict, args, kwargs, instance):
+    items = (cached_result.get("matches") or {}).get("items") or []
+    objects = [
+        SimpleNamespace(
+            uuid=m.get("id"),
+            metadata=SimpleNamespace(score=m.get("score"), distance=None),
+            properties=m.get("metadata") or {},
+            vector=None,
+        )
+        for m in items
+    ]
+    return SimpleNamespace(objects=objects)
+
+
 _QUERY_OPS = (
-    ("near_vector", "near_vector", _summarize_near_vector),
-    ("near_text", "near_text", _summarize_near_text),
-    ("hybrid", "hybrid", _summarize_hybrid),
-    ("bm25", "bm25", _summarize_bm25),
-    ("fetch_objects", "fetch_objects", _summarize_fetch_objects),
+    ("near_vector", "near_vector", _summarize_near_vector, _near_vector_key),
+    ("near_text", "near_text", _summarize_near_text, _near_text_key),
+    ("hybrid", "hybrid", _summarize_hybrid, _hybrid_key),
+    ("bm25", "bm25", _summarize_bm25, _bm25_key),
+    ("fetch_objects", "fetch_objects", _summarize_fetch_objects, _fetch_objects_key),
 )
 
 _DATA_OPS = (
@@ -285,7 +340,8 @@ _DATA_OPS = (
 )
 
 
-def _import_first(candidates):
+def _import_cls(candidates):
+    """Return the first importable class from a list of (module_path, class_name) pairs."""
     for path, attr in candidates:
         try:
             mod = __import__(path, fromlist=[attr])
@@ -297,24 +353,43 @@ def _import_first(candidates):
     return None
 
 
-def _patch_ops(cls, ops, wrapper_factory):
-    for attr, api, summarize in ops:
-        if hasattr(cls, attr):
-            setattr(
-                cls, attr,
-                wrapper_factory(getattr(cls, attr), TraceType.Weaviate, api, summarize),
-            )
+# Weaviate v4 restructured each query op into its own package.
+# Each op has a shared executor (holds the original method) plus separate
+# sync and async concrete subclasses.  We patch the concrete subclasses so
+# sync and async wrappers never overwrite each other on the shared executor.
+#
+# Tuple: (attr, api, summarize_fn, key_fn, base_pkg,
+#         executor_cls, sync_cls, async_cls)
+_QUERY_EXECUTOR_OPS = (
+    ("near_vector", "near_vector", _summarize_near_vector, _near_vector_key,
+     "weaviate.collections.queries.near_vector.query",
+     "_NearVectorQueryExecutor", "_NearVectorQuery", "_NearVectorQueryAsync"),
+    ("near_text",   "near_text",   _summarize_near_text,   _near_text_key,
+     "weaviate.collections.queries.near_text.query",
+     "_NearTextQueryExecutor",   "_NearTextQuery",   "_NearTextQueryAsync"),
+    ("hybrid",      "hybrid",      _summarize_hybrid,      _hybrid_key,
+     "weaviate.collections.queries.hybrid.query",
+     "_HybridQueryExecutor",     "_HybridQuery",     "_HybridQueryAsync"),
+    ("bm25",        "bm25",        _summarize_bm25,        _bm25_key,
+     "weaviate.collections.queries.bm25.query",
+     "_BM25QueryExecutor",       "_BM25Query",       "_BM25QueryAsync"),
+    ("fetch_objects", "fetch_objects", _summarize_fetch_objects, _fetch_objects_key,
+     "weaviate.collections.queries.fetch_objects.query",
+     "_FetchObjectsQueryExecutor", "_FetchObjectsQuery", "_FetchObjectsQueryAsync"),
+)
 
-
-_QUERY_SYNC_PATHS = (
+# Legacy single-class paths (older Weaviate v4 client builds).
+_QUERY_LEGACY_SYNC_PATHS = (
     ("weaviate.collections.queries.query", "_QueryCollection"),
     ("weaviate.collections.queries.query", "_Query"),
 )
-_QUERY_ASYNC_PATHS = (
+_QUERY_LEGACY_ASYNC_PATHS = (
     ("weaviate.collections.queries.query", "_QueryCollectionAsync"),
     ("weaviate.collections.queries.query", "_QueryAsync"),
 )
-_DATA_SYNC_PATHS = (
+
+_DATA_PATHS = (
+    ("weaviate.collections.data.executor", "_DataCollectionExecutor"),
     ("weaviate.collections.data", "_DataCollection"),
     ("weaviate.collections.data.data", "_Data"),
 )
@@ -324,19 +399,80 @@ _DATA_ASYNC_PATHS = (
 )
 
 
+def _weaviate_target_fn(args, kwargs, instance) -> str:
+    return _collection_name(instance) or ""
+
+
+def _patch_data_ops(cls, wrapper_factory):
+    inv_factory = (
+        make_sync_invalidating_wrapper
+        if wrapper_factory is make_sync_wrapper
+        else make_async_invalidating_wrapper
+    )
+    for attr, api, summarize in _DATA_OPS:
+        if hasattr(cls, attr):
+            setattr(cls, attr, inv_factory(
+                getattr(cls, attr), TraceType.Weaviate, api, summarize, _weaviate_target_fn,
+            ))
+
+
+def _patch_query_ops_per_class(sync: bool) -> bool:
+    """Patch each query op on its dedicated concrete class (sync or async).
+
+    Returns True if at least one op was patched successfully.
+    Getting the original from the executor's own __dict__ ensures we never
+    accidentally wrap an already-wrapped method.
+    """
+    cached_fn = make_sync_cached_wrapper if sync else make_async_cached_wrapper
+    sub_mod = "sync" if sync else "async_"
+    patched_any = False
+    for attr, api, summarize, key_fn, base_pkg, exec_cls_name, sync_cls_name, async_cls_name in _QUERY_EXECUTOR_OPS:
+        target_cls_name = sync_cls_name if sync else async_cls_name
+        try:
+            exec_mod = __import__(f"{base_pkg}.executor", fromlist=[exec_cls_name])
+            exec_cls = getattr(exec_mod, exec_cls_name, None)
+            if exec_cls is None or attr not in vars(exec_cls):
+                continue
+            original = vars(exec_cls)[attr]
+
+            target_mod = __import__(f"{base_pkg}.{sub_mod}", fromlist=[target_cls_name])
+            target_cls = getattr(target_mod, target_cls_name, None)
+            if target_cls is None:
+                continue
+            setattr(target_cls, attr, cached_fn(
+                original, TraceType.Weaviate, api, summarize, key_fn, _objects_mock,
+            ))
+            patched_any = True
+        except Exception:
+            continue
+    return patched_any
+
+
 def patch_weaviate():
-    qcls = _import_first(_QUERY_SYNC_PATHS)
-    if qcls is not None:
-        _patch_ops(qcls, _QUERY_OPS, make_sync_wrapper)
-    dcls = _import_first(_DATA_SYNC_PATHS)
+    patched = _patch_query_ops_per_class(sync=True)
+    if not patched:
+        qcls = _import_cls(_QUERY_LEGACY_SYNC_PATHS)
+        if qcls is not None:
+            for attr, api, summarize, key_fn, *_ in _QUERY_EXECUTOR_OPS:
+                if hasattr(qcls, attr):
+                    setattr(qcls, attr, make_sync_cached_wrapper(
+                        getattr(qcls, attr), TraceType.Weaviate, api, summarize, key_fn, _objects_mock,
+                    ))
+    dcls = _import_cls(_DATA_PATHS)
     if dcls is not None:
-        _patch_ops(dcls, _DATA_OPS, make_sync_wrapper)
+        _patch_data_ops(dcls, make_sync_wrapper)
 
 
 def patch_weaviate_async():
-    qcls = _import_first(_QUERY_ASYNC_PATHS)
-    if qcls is not None:
-        _patch_ops(qcls, _QUERY_OPS, make_async_wrapper)
-    dcls = _import_first(_DATA_ASYNC_PATHS)
+    patched = _patch_query_ops_per_class(sync=False)
+    if not patched:
+        qcls = _import_cls(_QUERY_LEGACY_ASYNC_PATHS)
+        if qcls is not None:
+            for attr, api, summarize, key_fn, *_ in _QUERY_EXECUTOR_OPS:
+                if hasattr(qcls, attr):
+                    setattr(qcls, attr, make_async_cached_wrapper(
+                        getattr(qcls, attr), TraceType.Weaviate, api, summarize, key_fn, _objects_mock,
+                    ))
+    dcls = _import_cls(_DATA_ASYNC_PATHS) or _import_cls(_DATA_PATHS)
     if dcls is not None:
-        _patch_ops(dcls, _DATA_OPS, make_async_wrapper)
+        _patch_data_ops(dcls, make_async_wrapper)

@@ -36,13 +36,26 @@ def _usage_dict(usage):
         "total": getattr(usage, "total_token_count", None),
     }
 
+def _flatten_candidates_text(kept_candidates):
+    """Extract a plain text string from _strip_media's nested list of candidates."""
+    if not kept_candidates:
+        return None
+    parts = []
+    for cand in kept_candidates:
+        for part in (cand if isinstance(cand, list) else [cand]):
+            if isinstance(part, dict) and part.get("text"):
+                parts.append(part["text"])
+    return "\n".join(parts) if parts else None
+
+
 @_fail_open
 def _emit_genai_trace(kwargs, response, start, end):
     usage = getattr(response, "usage_metadata", None)
     candidates = getattr(response, "candidates", None)
     _record_dispatched_tool_calls(candidates)
     thinking = _extract_thinking(candidates)
-    text = _strip_media(candidates)
+    kept = _strip_media(candidates)
+    text = _flatten_candidates_text(kept)
     function_calls = _extract_function_calls(candidates)
     tools, tool_config = _extract_request_tools(kwargs)
     mcp_servers = _extract_mcp_servers(kwargs)
@@ -109,16 +122,30 @@ def patch_genai():
         try:
             pre_call_guard(kwargs)
 
-            cached = pre_call_optimize(kwargs, "gemini")
+            # Normalize tools/mcp_servers before lookup so the cache key matches
+            # what populate_cache stored (tools extracted from config, MCP sessions
+            # converted to stable descriptors).
+            _tools_norm, _tool_config_norm = _extract_request_tools(kwargs)
+            _mcp_servers_norm = _extract_mcp_servers(kwargs)
+            _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
+            cached = pre_call_optimize(_lookup_kw, "gemini")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
+                tools, tool_config = _extract_request_tools(kwargs)
                 log_trace({
                     "type": "llm",
                     "integration": TraceType.Gemini.value,
                     "api": "generate_content",
                     "model": kwargs.get("model"),
                     "contents": _to_jsonable(kwargs.get("contents")),
-                    "response": cached.candidates[0].content.parts[0].text,
+                    "tools": tools,
+                    "tool_config": tool_config,
+                    "response": _payload.get("response"),
+                    "function_calls": _payload.get("function_calls"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,
@@ -160,16 +187,30 @@ def patch_genai_async():
         try:
             pre_call_guard(kwargs)
 
-            cached = pre_call_optimize(kwargs, "gemini")
+            # Normalize tools/mcp_servers before lookup so the cache key matches
+            # what populate_cache stored (tools extracted from config, MCP sessions
+            # converted to stable descriptors).
+            _tools_norm, _tool_config_norm = _extract_request_tools(kwargs)
+            _mcp_servers_norm = _extract_mcp_servers(kwargs)
+            _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
+            cached = pre_call_optimize(_lookup_kw, "gemini")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
+                tools, tool_config = _extract_request_tools(kwargs)
                 log_trace({
                     "type": "llm",
                     "integration": TraceType.Gemini.value,
                     "api": "generate_content",
                     "model": kwargs.get("model"),
                     "contents": _to_jsonable(kwargs.get("contents")),
-                    "response": cached.candidates[0].content.parts[0].text,
+                    "tools": tools,
+                    "tool_config": tool_config,
+                    "response": _payload.get("response"),
+                    "function_calls": _payload.get("function_calls"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,
@@ -223,6 +264,7 @@ def patch_genai_stream():
         start = time.time()
         errored = False
         try:
+            pre_call_guard(kwargs)
             try:
                 for chunk in original(self, *args, **kwargs):
                     agg.feed(chunk)
@@ -264,6 +306,7 @@ def patch_genai_stream_async():
         start = time.time()
         errored = False
         try:
+            pre_call_guard(kwargs)
             try:
                 async for chunk in original(self, *args, **kwargs):
                     agg.feed(chunk)
@@ -289,7 +332,7 @@ def _emit_vertex_trace(self, kwargs, request_contents, response, start, end, too
     candidates = getattr(response, "candidates", None)
     _record_dispatched_tool_calls(candidates)
     thinking = _extract_thinking(candidates)
-    text = _strip_media(candidates)
+    text = _flatten_candidates_text(_strip_media(candidates))
     function_calls = _extract_function_calls(candidates)
     tools, tool_config = _extract_request_tools(kwargs, instance=self)
     mcp_servers = _extract_mcp_servers(kwargs)
@@ -412,6 +455,34 @@ def patch_vertexai():
         start = time.time()
         try:
             pre_call_guard(kwargs)
+
+            if not kwargs.get("stream"):
+                kwargs_for_cache = {**kwargs, "contents": request_contents, "model": model}
+                cached = pre_call_optimize(kwargs_for_cache, "gemini")
+                if cached is not None:
+                    end = time.time()
+                    _payload = getattr(cached, "_fluiq_payload", {})
+                    tools, tool_config = _extract_request_tools(kwargs, instance=self)
+                    log_trace({
+                        "type": "llm",
+                        "integration": TraceType.Gemini.value,
+                        "api": "vertex.generate_content",
+                        "model": model,
+                        "contents": _to_jsonable(request_contents),
+                        "tools": tools,
+                        "tool_config": tool_config,
+                        "response": _payload.get("response"),
+                        "function_calls": _payload.get("function_calls"),
+                        "mcp_calls": _payload.get("mcp_calls"),
+                        "mcp_results": _payload.get("mcp_results"),
+                        "mcp_servers": _payload.get("mcp_servers"),
+                        "latency": end - start,
+                        "parent_id": current_parent_id(),
+                        "_cache_hit": True,
+                        "tokens": None,
+                    })
+                    return cached
+
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -454,6 +525,34 @@ def patch_vertexai_async():
         start = time.time()
         try:
             pre_call_guard(kwargs)
+
+            if not kwargs.get("stream"):
+                kwargs_for_cache = {**kwargs, "contents": request_contents, "model": model}
+                cached = pre_call_optimize(kwargs_for_cache, "gemini")
+                if cached is not None:
+                    end = time.time()
+                    _payload = getattr(cached, "_fluiq_payload", {})
+                    tools, tool_config = _extract_request_tools(kwargs, instance=self)
+                    log_trace({
+                        "type": "llm",
+                        "integration": TraceType.Gemini.value,
+                        "api": "vertex.generate_content",
+                        "model": model,
+                        "contents": _to_jsonable(request_contents),
+                        "tools": tools,
+                        "tool_config": tool_config,
+                        "response": _payload.get("response"),
+                        "function_calls": _payload.get("function_calls"),
+                        "mcp_calls": _payload.get("mcp_calls"),
+                        "mcp_results": _payload.get("mcp_results"),
+                        "mcp_servers": _payload.get("mcp_servers"),
+                        "latency": end - start,
+                        "parent_id": current_parent_id(),
+                        "_cache_hit": True,
+                        "tokens": None,
+                    })
+                    return cached
+
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:

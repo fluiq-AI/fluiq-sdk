@@ -4,6 +4,7 @@ import fluiq
 from ..keys import FLUIQ_API_KEY
 
 fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
+fluiq.optimize()
 
 client = anthropic.Anthropic()
 
@@ -26,7 +27,6 @@ def fake_weather(city: str) -> str:
     return json.dumps({"city": city, "temp_c": 21, "condition": "sunny"})
 
 
-@fluiq.trace
 def run():
     messages = [
         {"role": "user", "content": "What's the weather in Paris?"},

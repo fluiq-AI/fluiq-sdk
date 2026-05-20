@@ -9,6 +9,7 @@ from fluiq.integrations.shared.context import (
     current_parent_id,
     format_error_traceback,
 )
+from fluiq.integrations.shared.security_gate import pre_call_guard
 from fluiq.integrations.Langchain.helper.utils import (
     _to_jsonable,
     _model_name,
@@ -93,6 +94,8 @@ class FluiqCallbackHandler(BaseCallbackHandler):
 
     def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None,
                      tags=None, metadata=None, **kwargs):
+        if prompts:
+            pre_call_guard({"prompt": "\n".join(p for p in prompts if isinstance(p, str))})
         token = enter_langchain_llm()
         model = _model_name(serialized, kwargs.get("invocation_params"), metadata)
         self._start(
@@ -115,6 +118,17 @@ class FluiqCallbackHandler(BaseCallbackHandler):
 
     def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None,
                             tags=None, metadata=None, **kwargs):
+        flat = []
+        for msg_list in messages:
+            for msg in (msg_list if isinstance(msg_list, list) else [msg_list]):
+                content = getattr(msg, "content", "") or ""
+                if isinstance(content, list):
+                    content = " ".join(
+                        b.get("text", "") if isinstance(b, dict) else str(b) for b in content
+                    )
+                flat.append({"role": "user", "content": str(content)})
+        if flat:
+            pre_call_guard({"messages": flat})
         token = enter_langchain_llm()
         model = _model_name(serialized, kwargs.get("invocation_params"), metadata)
         self._start(

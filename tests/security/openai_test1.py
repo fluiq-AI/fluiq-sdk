@@ -1,8 +1,12 @@
+import logging
+logging.basicConfig(level=logging.WARNING)
+
 from openai import OpenAI
 from ..keys import FLUIQ_API_KEY
-from fluiq import instrument
+import fluiq
 
-instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
+fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
+fluiq.secure()
 
 client = OpenAI()
 

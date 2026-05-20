@@ -1,5 +1,3 @@
-from typing import Any
-
 from fluiq.integrations.shared.models import TraceType
 from fluiq.integrations.Vectorstores.shared.utils import (
     _build_match,
@@ -8,8 +6,15 @@ from fluiq.integrations.Vectorstores.shared.utils import (
     _safe_jsonable,
     _truncate_ids,
     _vector_count_and_dim,
+    make_sync_cached_wrapper,
+    make_sync_invalidating_wrapper,
     make_sync_wrapper,
 )
+from fluiq.optimization.client import vectorstore_cache_key
+
+
+def _chroma_target(args, kwargs, instance) -> str:
+    return getattr(instance, "name", "") or ""
 
 
 def _target(instance) -> dict:
@@ -112,6 +117,35 @@ def _summarize_delete(args, kwargs, instance, response=None) -> dict:
     }
 
 
+def _query_cache_key(args, kwargs, instance) -> str:
+    qt = kwargs.get("query_texts") or kwargs.get("query_embeddings")
+    return vectorstore_cache_key(
+        "chromadb",
+        getattr(instance, "name", "") or "",
+        qt,
+        kwargs.get("n_results"),
+        kwargs.get("where"),
+    )
+
+
+def _query_mock(cached_result: dict, args, kwargs, instance) -> dict:
+    items = (cached_result.get("matches") or {}).get("items") or []
+    ids = [[m.get("id") for m in items]]
+    docs = [[m.get("text") for m in items]]
+    metas = [[m.get("metadata") for m in items]]
+    dists = [[m.get("score") for m in items]]
+    return {
+        "ids": ids,
+        "documents": docs,
+        "metadatas": metas,
+        "distances": dists,
+        "embeddings": None,
+        "data": None,
+        "uris": None,
+        "included": ["distances", "documents", "metadatas"],
+    }
+
+
 def patch_chromadb():
     try:
         from chromadb.api.models.Collection import Collection
@@ -123,19 +157,27 @@ def patch_chromadb():
     )
 
     if hasattr(Collection, "query"):
-        Collection.query = _wrap(Collection.query, "query", _summarize_query)
-    if hasattr(Collection, "add"):
-        Collection.add = _wrap(Collection.add, "add", _summarize_mutation)
-    if hasattr(Collection, "upsert"):
-        Collection.upsert = _wrap(Collection.upsert, "upsert", _summarize_mutation)
-    if hasattr(Collection, "update"):
-        Collection.update = _wrap(Collection.update, "update", _summarize_mutation)
-    if hasattr(Collection, "get"):
-        Collection.get = _wrap(Collection.get, "get", _summarize_get)
-    if hasattr(Collection, "count"):
-        Collection.count = _wrap(Collection.count, "count", _summarize_count)
-    if hasattr(Collection, "delete"):
-        Collection.delete = _wrap(Collection.delete, "delete", _summarize_delete)
+        Collection.query = make_sync_cached_wrapper(
+            Collection.query, TraceType.ChromaDB, "query",
+            _summarize_query, _query_cache_key, _query_mock,
+        )
+    _inv = lambda method, api, summarize: make_sync_invalidating_wrapper(  # noqa: E731
+        method, TraceType.ChromaDB, api, summarize, _chroma_target,
+    )
+    for attr, api, summarize in (
+        ("add", "add", _summarize_mutation),
+        ("upsert", "upsert", _summarize_mutation),
+        ("update", "update", _summarize_mutation),
+        ("delete", "delete", _summarize_delete),
+    ):
+        if hasattr(Collection, attr):
+            setattr(Collection, attr, _inv(getattr(Collection, attr), api, summarize))
+    for attr, api, summarize in (
+        ("get", "get", _summarize_get),
+        ("count", "count", _summarize_count),
+    ):
+        if hasattr(Collection, attr):
+            setattr(Collection, attr, _wrap(getattr(Collection, attr), api, summarize))
 
 
 def patch_chromadb_async():
@@ -143,20 +185,32 @@ def patch_chromadb_async():
         from chromadb.api.models.AsyncCollection import AsyncCollection
     except Exception:
         return
-    from fluiq.integrations.Vectorstores.shared.utils import make_async_wrapper
+    from fluiq.integrations.Vectorstores.shared.utils import make_async_cached_wrapper, make_async_wrapper
 
     _wrap = lambda method, api, summarize: make_async_wrapper(  # noqa: E731
         method, TraceType.ChromaDB, api, summarize,
     )
 
+    from fluiq.integrations.Vectorstores.shared.utils import make_async_invalidating_wrapper
+
+    if hasattr(AsyncCollection, "query"):
+        AsyncCollection.query = make_async_cached_wrapper(
+            AsyncCollection.query, TraceType.ChromaDB, "query",
+            _summarize_query, _query_cache_key, _query_mock,
+        )
     for attr, api, summarize in (
-        ("query", "query", _summarize_query),
         ("add", "add", _summarize_mutation),
         ("upsert", "upsert", _summarize_mutation),
         ("update", "update", _summarize_mutation),
+        ("delete", "delete", _summarize_delete),
+    ):
+        if hasattr(AsyncCollection, attr):
+            setattr(AsyncCollection, attr, make_async_invalidating_wrapper(
+                getattr(AsyncCollection, attr), TraceType.ChromaDB, api, summarize, _chroma_target,
+            ))
+    for attr, api, summarize in (
         ("get", "get", _summarize_get),
         ("count", "count", _summarize_count),
-        ("delete", "delete", _summarize_delete),
     ):
         if hasattr(AsyncCollection, attr):
             setattr(AsyncCollection, attr, _wrap(getattr(AsyncCollection, attr), api, summarize))

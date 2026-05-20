@@ -3,8 +3,15 @@ from typing import Any, Optional
 from fluiq.integrations.shared.models import TraceType
 from fluiq.integrations.Vectorstores.shared.utils import (
     _truncate_ids,
+    make_sync_cached_wrapper,
+    make_sync_invalidating_wrapper,
     make_sync_wrapper,
 )
+from fluiq.optimization.client import vectorstore_cache_key
+
+
+def _faiss_target(args, kwargs, instance) -> str:
+    return f"{type(instance).__name__}:{getattr(instance, 'd', None)}"
 
 
 def _shape(x: Any) -> Optional[tuple]:
@@ -151,25 +158,82 @@ def _summarize_reset(args, kwargs, instance, response=None) -> dict:
     return {"target": _target(instance), "mutation": {}}
 
 
-_OPS = (
+def _search_cache_key(args, kwargs, instance) -> str:
+    x = kwargs.get("x") or (args[0] if args else None)
+    k = kwargs.get("k") or (args[1] if len(args) > 1 else None)
+    idx_type = type(instance).__name__
+    dim = getattr(instance, "d", None)
+    # Hash the query vector(s) as a list; large arrays are slow but correct.
+    try:
+        q_list = x.tolist() if hasattr(x, "tolist") else list(x)
+    except Exception:
+        q_list = str(x)
+    return vectorstore_cache_key("faiss", f"{idx_type}:{dim}", q_list, k, None)
+
+
+def _search_raw_result(args, kwargs, instance, response) -> Optional[dict]:
+    if not isinstance(response, tuple) or len(response) < 2:
+        return None
+    D, I = response[0], response[1]
+    try:
+        return {"distances": D.tolist(), "indices": I.tolist()}
+    except Exception:
+        return None
+
+
+def _search_mock(cached_result: dict, args, kwargs, instance):
+    import numpy as np
+    dists = cached_result.get("distances", [[]])
+    idxs = cached_result.get("indices", [[]])
+    return (
+        np.array(dists, dtype=np.float32),
+        np.array(idxs, dtype=np.int64),
+    )
+
+
+# These mutate the index → bump the generation so searches re-run
+_INVALIDATING_OPS = (
     ("add", "add", _summarize_add),
     ("add_with_ids", "add_with_ids", _summarize_add_with_ids),
-    ("search", "search", _summarize_search),
-    ("range_search", "range_search", _summarize_range_search),
     ("remove_ids", "remove_ids", _summarize_remove_ids),
     ("train", "train", _summarize_train),
     ("reset", "reset", _summarize_reset),
 )
+# range_search is read-only
+_PLAIN_OPS = (
+    ("range_search", "range_search", _summarize_range_search),
+)
 
 
 def _patch_index_class(cls):
-    for attr, api, summarize in _OPS:
-        if hasattr(cls, attr):
+    # Use vars(cls) to only patch methods defined on THIS class, not inherited
+    # ones.  Without this guard, iterating all subclasses would double-wrap any
+    # method that is inherited from an already-patched parent.
+    own = vars(cls)
+    if "search" in own:
+        try:
+            setattr(
+                cls, "search",
+                make_sync_cached_wrapper(
+                    own["search"], TraceType.FAISS, "search",
+                    _summarize_search, _search_cache_key, _search_mock,
+                    raw_result_fn=_search_raw_result,
+                ),
+            )
+        except (AttributeError, TypeError):
+            pass
+    for attr, api, summarize in _INVALIDATING_OPS:
+        if attr in own:
             try:
-                setattr(
-                    cls, attr,
-                    make_sync_wrapper(getattr(cls, attr), TraceType.FAISS, api, summarize),
-                )
+                setattr(cls, attr, make_sync_invalidating_wrapper(
+                    own[attr], TraceType.FAISS, api, summarize, _faiss_target,
+                ))
+            except (AttributeError, TypeError):
+                continue
+    for attr, api, summarize in _PLAIN_OPS:
+        if attr in own:
+            try:
+                setattr(cls, attr, make_sync_wrapper(own[attr], TraceType.FAISS, api, summarize))
             except (AttributeError, TypeError):
                 continue
 
@@ -179,7 +243,19 @@ def patch_faiss():
         import faiss
     except Exception:
         return
-    for cls_name in ("Index", "IndexBinary"):
-        cls = getattr(faiss, cls_name, None)
-        if cls is not None:
-            _patch_index_class(cls)
+    import inspect
+    base_cls = getattr(faiss, "Index", None)
+    base_binary_cls = getattr(faiss, "IndexBinary", None)
+    seen: set = set()
+    for name in dir(faiss):
+        try:
+            cls = getattr(faiss, name, None)
+            if not inspect.isclass(cls) or id(cls) in seen:
+                continue
+            seen.add(id(cls))
+            is_index = base_cls is not None and issubclass(cls, base_cls)
+            is_binary = base_binary_cls is not None and issubclass(cls, base_binary_cls)
+            if is_index or is_binary:
+                _patch_index_class(cls)
+        except Exception:
+            continue

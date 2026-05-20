@@ -2,6 +2,7 @@ import json
 import time
 from typing import Any, Callable, Optional
 
+from fluiq.config import _config as _fluiq_config
 from fluiq.integrations.shared.context import current_parent_id
 from fluiq.integrations.shared.models import LogTrace, TraceType
 from fluiq.tracer import log_trace
@@ -143,8 +144,12 @@ def emit_vector_trace(
     end: float,
     success: bool = True,
     error: Optional[str] = None,
+    cache_hit: Optional[bool] = None,
 ) -> None:
     try:
+        extras: dict = {}
+        if cache_hit is False:
+            extras["cache_hit"] = False
         payload = LogTrace(
             type="vectorstore",
             integration=integration,
@@ -157,10 +162,247 @@ def emit_vector_trace(
             result=result,
             mutation=mutation,
             error=error,
+            **extras,
         )
-        log_trace(payload.model_dump(mode="json", exclude_none=True))
+        payload_dict = payload.model_dump(mode="json", exclude_none=True)
+        if cache_hit is True:
+            # Inject after model_dump — Pydantic v2 strips underscore-prefixed keys,
+            # so passing _cache_hit via LogTrace kwargs would silently drop it.
+            payload_dict["_cache_hit"] = True
+        log_trace(payload_dict)
     except Exception:
         pass
+
+
+def _is_vs_cache_active() -> bool:
+    return (
+        bool(_fluiq_config.get("optimize"))
+        and _fluiq_config.get("optimize_mode", "cache") == "cache"
+        and bool(_fluiq_config.get("api_key"))
+    )
+
+
+def make_sync_cached_wrapper(
+    original: Callable,
+    integration: TraceType,
+    api: str,
+    summarize: Callable,
+    cache_key_fn: Callable,
+    mock_builder: Callable,
+    raw_result_fn: Optional[Callable] = None,
+) -> Callable:
+    """Like make_sync_wrapper but caches query results via fluiq.optimize().
+
+    cache_key_fn(args, kwargs, instance) -> Optional[str]
+    mock_builder(cached_result_dict, args, kwargs, instance) -> provider_response
+    raw_result_fn(args, kwargs, instance, response) -> Optional[dict]  — override
+        what gets stored; defaults to summary["result"] when None.
+    """
+    def wrapped(self, *args, **kwargs):
+        cache_key: Optional[str] = None
+        if _is_vs_cache_active():
+            try:
+                cache_key = cache_key_fn(args, kwargs, self)
+            except Exception:
+                cache_key = None
+
+        if cache_key:
+            try:
+                from fluiq.optimization.client import lookup_vectorstore_cache
+                cached = lookup_vectorstore_cache(cache_key)
+                if cached is not None:
+                    mock = mock_builder(cached.get("result", {}), args, kwargs, self)
+                    ts = time.time()
+                    summary = _safe_summarize(summarize, args, kwargs, self, mock) or {}
+                    emit_vector_trace(integration, api, **summary, start=ts, end=ts, cache_hit=True)
+                    from fluiq.integrations.shared.context import mark_inner_cache_hit
+                    mark_inner_cache_hit()
+                    return mock
+            except Exception:
+                pass
+
+        start = time.time()
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as exc:
+            end = time.time()
+            summary = _safe_summarize(summarize, args, kwargs, self)
+            emit_vector_trace(
+                integration, api, **summary,
+                start=start, end=end, success=False, error=type(exc).__name__,
+            )
+            raise
+        end = time.time()
+        summary = _safe_summarize(summarize, args, kwargs, self, response) or {}
+
+        if cache_key:
+            try:
+                cache_result = (
+                    raw_result_fn(args, kwargs, self, response)
+                    if raw_result_fn is not None
+                    else summary.get("result")
+                )
+                if cache_result:
+                    from fluiq.optimization.client import populate_vectorstore_cache
+                    populate_vectorstore_cache(cache_key, cache_result)
+            except Exception:
+                pass
+
+        emit_vector_trace(
+            integration, api, **summary,
+            start=start, end=end,
+            cache_hit=False if cache_key else None,
+        )
+        return response
+
+    return wrapped
+
+
+def make_async_cached_wrapper(
+    original: Callable,
+    integration: TraceType,
+    api: str,
+    summarize: Callable,
+    cache_key_fn: Callable,
+    mock_builder: Callable,
+    raw_result_fn: Optional[Callable] = None,
+) -> Callable:
+    async def wrapped(self, *args, **kwargs):
+        cache_key: Optional[str] = None
+        if _is_vs_cache_active():
+            try:
+                cache_key = cache_key_fn(args, kwargs, self)
+            except Exception:
+                cache_key = None
+
+        if cache_key:
+            try:
+                from fluiq.optimization.client import lookup_vectorstore_cache
+                cached = lookup_vectorstore_cache(cache_key)
+                if cached is not None:
+                    mock = mock_builder(cached.get("result", {}), args, kwargs, self)
+                    ts = time.time()
+                    summary = _safe_summarize(summarize, args, kwargs, self, mock) or {}
+                    emit_vector_trace(integration, api, **summary, start=ts, end=ts, cache_hit=True)
+                    from fluiq.integrations.shared.context import mark_inner_cache_hit
+                    mark_inner_cache_hit()
+                    return mock
+            except Exception:
+                pass
+
+        start = time.time()
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as exc:
+            end = time.time()
+            summary = _safe_summarize(summarize, args, kwargs, self)
+            emit_vector_trace(
+                integration, api, **summary,
+                start=start, end=end, success=False, error=type(exc).__name__,
+            )
+            raise
+        end = time.time()
+        summary = _safe_summarize(summarize, args, kwargs, self, response) or {}
+
+        if cache_key:
+            try:
+                cache_result = (
+                    raw_result_fn(args, kwargs, self, response)
+                    if raw_result_fn is not None
+                    else summary.get("result")
+                )
+                if cache_result:
+                    from fluiq.optimization.client import populate_vectorstore_cache
+                    populate_vectorstore_cache(cache_key, cache_result)
+            except Exception:
+                pass
+
+        emit_vector_trace(
+            integration, api, **summary,
+            start=start, end=end,
+            cache_hit=False if cache_key else None,
+        )
+        return response
+
+    return wrapped
+
+
+def make_sync_invalidating_wrapper(
+    original: Callable,
+    integration: TraceType,
+    api: str,
+    summarize: Callable,
+    target_fn: Callable,
+) -> Callable:
+    """Like make_sync_wrapper but invalidates the vectorstore query cache on success.
+
+    target_fn(args, kwargs, instance) -> str  — returns the collection/index name.
+    Called for mutation operations (add, upsert, update, delete) so that
+    subsequent queries see fresh results.
+    """
+    def wrapped(self, *args, **kwargs):
+        start = time.time()
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as exc:
+            end = time.time()
+            summary = _safe_summarize(summarize, args, kwargs, self)
+            emit_vector_trace(
+                integration, api, **summary,
+                start=start, end=end, success=False, error=type(exc).__name__,
+            )
+            raise
+        end = time.time()
+        summary = _safe_summarize(summarize, args, kwargs, self, response) or {}
+        emit_vector_trace(integration, api, **summary, start=start, end=end)
+
+        if _is_vs_cache_active():
+            try:
+                target = target_fn(args, kwargs, self) or ""
+                from fluiq.optimization.client import invalidate_vectorstore_cache
+                invalidate_vectorstore_cache(integration.value if hasattr(integration, "value") else str(integration), target)
+            except Exception:
+                pass
+
+        return response
+
+    return wrapped
+
+
+def make_async_invalidating_wrapper(
+    original: Callable,
+    integration: TraceType,
+    api: str,
+    summarize: Callable,
+    target_fn: Callable,
+) -> Callable:
+    async def wrapped(self, *args, **kwargs):
+        start = time.time()
+        try:
+            response = await original(self, *args, **kwargs)
+        except Exception as exc:
+            end = time.time()
+            summary = _safe_summarize(summarize, args, kwargs, self)
+            emit_vector_trace(
+                integration, api, **summary,
+                start=start, end=end, success=False, error=type(exc).__name__,
+            )
+            raise
+        end = time.time()
+        summary = _safe_summarize(summarize, args, kwargs, self, response) or {}
+        emit_vector_trace(integration, api, **summary, start=start, end=end)
+
+        if _is_vs_cache_active():
+            try:
+                target = target_fn(args, kwargs, self) or ""
+                from fluiq.optimization.client import invalidate_vectorstore_cache
+                invalidate_vectorstore_cache(integration.value if hasattr(integration, "value") else str(integration), target)
+            except Exception:
+                pass
+
+        return response
+
+    return wrapped
 
 
 def make_sync_wrapper(

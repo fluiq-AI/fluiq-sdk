@@ -1,16 +1,15 @@
-"""Thin SDK client for the fluiq-api /secure and /secure/check endpoints.
+"""Thin SDK client for the fluiq-api /secure/check endpoint.
 
-call_secure()      — post-call: sends prompt + response, enriches trace dict.
-pre_call_check()   — pre-call:  sends prompt only, raises FluiqSecurityError
-                                 when mode='block' and the server blocks.
+pre_call_check() — pre-call synchronous guard: sends prompt only, raises
+                   FluiqSecurityError when mode='block' and the server blocks.
 
-Both functions never raise on network errors — they log a warning and return
-so the user's application is never interrupted by observability infrastructure.
+Post-call security scanning is handled asynchronously by the evaluator worker.
+The SDK embeds _security_config in the trace event; /ingest strips it and fans
+out an sdk_security job to the evaluator Kafka topic.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import requests
 
@@ -19,93 +18,8 @@ from fluiq.config import _config
 logger = logging.getLogger(__name__)
 
 
-def _extract_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        parts: list[str] = []
-        for item in value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                content = item.get("content") or item.get("text") or ""
-                if isinstance(content, str):
-                    parts.append(content)
-        return "\n".join(parts)
-    return str(value)
-
-
 def _base_url() -> str:
     return f"{_config['endpoint']}/{_config['version']}"
-
-
-def call_secure(trace: dict[str, Any]) -> None:
-    """POST trace text to /secure, enrich trace with results.  Never raises."""
-    try:
-        prompt   = _extract_text(trace.get("input")    or trace.get("messages"))
-        response = _extract_text(trace.get("response") or trace.get("output"))
-
-        # Collect tool outputs and context docs if present
-        tool_outputs: list[str] = []
-        for tc in (trace.get("tool_calls") or []):
-            if isinstance(tc, dict):
-                result = tc.get("result") or tc.get("output") or ""
-                if result:
-                    tool_outputs.append(str(result))
-
-        r = requests.post(
-            f"{_base_url()}/secure",
-            json={
-                "api_key":      _config["api_key"],
-                "prompt":       prompt,
-                "response":     response,
-                "tool_outputs": tool_outputs,
-            },
-            timeout=3,
-        )
-
-        if r.status_code == 402:
-            logger.warning("[fluiq.secure] %s", r.json().get("detail", "Plan upgrade required"))
-            return
-
-        r.raise_for_status()
-        fields = r.json()
-
-        # Redact originals when server flags HIGH risk
-        if fields.get("should_block"):
-            if "input" in trace and isinstance(trace["input"], str):
-                trace["input"] = fields["prompt_redacted"]
-            if "messages" in trace:
-                trace["messages"] = None
-            if "response" in trace and isinstance(trace["response"], str):
-                trace["response"] = fields["response_redacted"]
-            if "output" in trace and isinstance(trace["output"], str):
-                trace["output"] = fields["response_redacted"]
-
-        trace.update({
-            "prompt_redacted":             fields.get("prompt_redacted",             ""),
-            "response_redacted":           fields.get("response_redacted",           ""),
-            "security_risk_level":         fields.get("security_risk_level",         "clean"),
-            "security_risk_score":         fields.get("security_risk_score",         0.0),
-            "pii_entities_prompt":         fields.get("pii_entities_prompt",         []),
-            "pii_entities_response":       fields.get("pii_entities_response",       []),
-            "injection_detected":          fields.get("injection_detected",          False),
-            "injection_patterns":          fields.get("injection_patterns",          []),
-            "jailbreak_detected":          fields.get("jailbreak_detected",          False),
-            "jailbreak_patterns":          fields.get("jailbreak_patterns",          []),
-            "skeleton_key_detected":       fields.get("skeleton_key_detected",       False),
-            "skeleton_key_patterns":       fields.get("skeleton_key_patterns",       []),
-            "secrets_detected":            fields.get("secrets_detected",            False),
-            "secret_types":                fields.get("secret_types",                []),
-            "indirect_injection_detected": fields.get("indirect_injection_detected", False),
-            "indirect_injection_sources":  fields.get("indirect_injection_sources",  []),
-            "semantic_attack_score":       fields.get("semantic_attack_score",       0.0),
-        })
-
-    except Exception as exc:
-        logger.warning("[fluiq.secure] post-call scan failed: %s", repr(exc))
 
 
 def pre_call_check(prompt_text: str) -> None:

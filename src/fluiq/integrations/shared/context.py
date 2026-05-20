@@ -4,6 +4,7 @@ from contextvars import ContextVar
 _in_langchain_llm: ContextVar = ContextVar("fluiq_in_langchain_llm", default=False)
 _current_trace_id: ContextVar = ContextVar("fluiq_current_trace_id", default=None)
 _current_llm_trace_id: ContextVar = ContextVar("fluiq_current_llm_trace_id", default=None)
+_inner_cache_hit: ContextVar[bool] = ContextVar("fluiq_inner_cache_hit", default=False)
 
 
 def is_in_langchain_llm() -> bool:
@@ -55,6 +56,16 @@ def pop_llm_trace_id(token):
         _current_llm_trace_id.reset(token)
     except (ValueError, LookupError):
         pass
+
+
+def mark_inner_cache_hit() -> None:
+    """Signal that an inner LLM/vectorstore call was served from cache.
+
+    Called by integration patches when they detect a cache hit.  The
+    enclosing @fluiq.trace wrapper reads and clears this flag after func()
+    returns so the function-level trace also shows _cache_hit=True.
+    """
+    _inner_cache_hit.set(True)
 
 
 def format_error_traceback(error):

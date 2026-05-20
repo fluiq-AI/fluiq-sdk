@@ -35,8 +35,20 @@ def _emit_messages_trace(kwargs, response, start, end, tool_call_latencies):
     content = getattr(response, "content", None)
     _record_dispatched_tool_calls(content)
     thinking = _extract_thinking(content)
-    text = _strip_media(content)
-    tool_uses = _extract_tool_use(text)
+    blocks = _strip_media(content)
+    tool_uses = _extract_tool_use(blocks)
+    # Flatten content blocks to a plain string so downstream consumers
+    # (evaluator, security scanner, log_trace response check) always get a str.
+    if isinstance(blocks, list):
+        text_parts = [
+            b.get("text", "") if isinstance(b, dict) else str(b)
+            for b in blocks
+            if (isinstance(b, dict) and b.get("type") == "text")
+            or (not isinstance(b, dict) and getattr(b, "type", None) == "text")
+        ]
+        text = "\n".join(text_parts) if text_parts else None
+    else:
+        text = blocks
     mcp_servers = _extract_mcp_servers(kwargs)
     mcp_calls = _extract_mcp_blocks(content)
     mcp_results = _extract_mcp_results_from_messages(kwargs.get("messages"))
@@ -164,6 +176,7 @@ def _build_messages_wrapper(original):
             cached = pre_call_optimize(kwargs, "anthropic")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
                 log_trace({
                     "type": "llm",
                     "integration": TraceType.Anthropic.value,
@@ -171,7 +184,12 @@ def _build_messages_wrapper(original):
                     "model": kwargs.get("model"),
                     "messages": _to_jsonable(kwargs.get("messages")),
                     "system": _to_jsonable(kwargs.get("system")),
-                    "response": cached.content[0].text,
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "tool_uses": _payload.get("tool_uses"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,
@@ -219,6 +237,7 @@ def _build_async_messages_wrapper(original):
             cached = pre_call_optimize(kwargs, "anthropic")
             if cached is not None:
                 end = time.time()
+                _payload = getattr(cached, "_fluiq_payload", {})
                 log_trace({
                     "type": "llm",
                     "integration": TraceType.Anthropic.value,
@@ -226,7 +245,12 @@ def _build_async_messages_wrapper(original):
                     "model": kwargs.get("model"),
                     "messages": _to_jsonable(kwargs.get("messages")),
                     "system": _to_jsonable(kwargs.get("system")),
-                    "response": cached.content[0].text,
+                    "tools": _to_jsonable(kwargs.get("tools")),
+                    "response": _payload.get("response"),
+                    "tool_uses": _payload.get("tool_uses"),
+                    "mcp_calls": _payload.get("mcp_calls"),
+                    "mcp_results": _payload.get("mcp_results"),
+                    "mcp_servers": _payload.get("mcp_servers"),
                     "latency": end - start,
                     "parent_id": current_parent_id(),
                     "_cache_hit": True,

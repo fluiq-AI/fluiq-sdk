@@ -4,6 +4,7 @@ from ..keys import FLUIQ_API_KEY
 import fluiq
 
 fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
+fluiq.optimize()
 
 from google import genai
 from google.genai import types
@@ -26,7 +27,8 @@ async def run():
                 contents="What transport protocols does the 2025-03-26 MCP spec support?",
                 config=types.GenerateContentConfig(tools=[session]),
             )
-            return response.text
+            return response
 
 
-print(asyncio.run(run()))
+asyncio.run(run())
+asyncio.run(run())

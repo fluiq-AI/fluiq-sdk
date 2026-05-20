@@ -20,7 +20,7 @@ _config={
     "eval_mode": "warn",         # "warn" | "block"
     "eval_metrics": None,        # None → SDK default; or explicit list
     "eval_thresholds": {},       # {"hallucination": 0.8, ...}
-    "eval_judge_model": "gpt-4o-mini",
+    "eval_judge_model": "claude-haiku-4-5-20251001",
 }
 
 def init(api_key: str = API_KEY, version: str = VERSION, endpoint: str = ENDPOINT):

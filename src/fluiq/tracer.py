@@ -27,14 +27,19 @@ def log_trace(data):
         # Remove legacy local-scan flag if present (no-op, kept for compat)
         data.pop("_security_scan", None)
 
-        if _config.get("secure", False):
-            try:
-                from fluiq.security.client import call_secure
-                call_secure(data)
-            except Exception:
-                pass
+        if _config.get("secure", False) and not data.pop("_security_pre_blocked", False):
+            # Embed security config so /ingest fans out to the evaluator worker.
+            # The worker runs the full post-call scan asynchronously.
+            data["_security_config"] = {"mode": _config.get("secure_mode", "warn")}
 
         is_cache_hit = data.pop("_cache_hit", False)
+        if is_cache_hit:
+            data["cache_hit"] = True
+        elif _config.get("optimize") and data.get("type") in ("llm", "function") and data.get("latency") is not None:
+            # LLM completion trace that went through the optimize path but was a
+            # cache miss (real API call). Mark explicitly so the backend can
+            # compute an accurate hit rate for the Optimize dashboard.
+            data["cache_hit"] = False
 
         if _config.get("optimize", False) and not is_cache_hit:
             try:
@@ -43,62 +48,44 @@ def log_trace(data):
             except Exception:
                 pass
 
+        # Warn mode: embed eval config so /ingest strips it and fans out to the
+        # eval worker. Block mode: /ingest gets no config; we call /evaluate
+        # synchronously below after the trace is stored.
+        if _config.get("eval", False) and not is_cache_hit:
+            _resp = data.get("response")
+            _resp_str = _resp if isinstance(_resp, str) else (
+                " ".join(str(x) for x in _resp) if isinstance(_resp, list) else ""
+            )
+            if data.get("type") == "llm" and _resp_str.strip():
+                if _config.get("eval_mode", "warn") == "warn":
+                    data["_eval_config"] = {
+                        "metrics": _config.get("eval_metrics") or ["hallucination", "relevance"],
+                        "judge_model": _config.get("eval_judge_model", "claude-haiku-4-5-20251001"),
+                        "thresholds": _config.get("eval_thresholds", {}),
+                    }
+
         send_event(data)
 
+        # Block mode: thin synchronous call to /evaluate after trace is stored.
+        # Raises FluiqEvalError if any metric falls below its threshold.
         if _config.get("eval", False) and not is_cache_hit:
-            _run_eval(data)
+            _resp = data.get("response")
+            _resp_str = _resp if isinstance(_resp, str) else (
+                " ".join(str(x) for x in _resp) if isinstance(_resp, list) else ""
+            )
+            if _config.get("eval_mode") == "block":
+                if data.get("type") == "llm" and _resp_str.strip():
+                    from fluiq.evals.client import call_evaluate_block
+                    from fluiq.exceptions import FluiqEvalError
+                    scores = call_evaluate_block(data)
+                    if scores:
+                        thresholds = _config.get("eval_thresholds", {})
+                        failures = {m: s for m, s in scores.items() if s < thresholds.get(m, 0.0)}
+                        if failures:
+                            raise FluiqEvalError(failures, scores)
 
     except Exception as exc:
         from fluiq.exceptions import FluiqEvalError
         if isinstance(exc, FluiqEvalError):
             raise
         pass
-
-
-def _run_eval(data: dict) -> None:
-    """Dispatch post-call evaluation in warn or block mode."""
-    mode = _config.get("eval_mode", "warn")
-    if mode == "block":
-        try:
-            from fluiq.evals.client import call_evaluate
-            from fluiq.exceptions import FluiqEvalError
-            scores = call_evaluate(data)
-            if scores:
-                thresholds = _config.get("eval_thresholds", {})
-                failures = {m: s for m, s in scores.items() if s < thresholds.get(m, 0.0)}
-                if failures:
-                    raise FluiqEvalError(failures, scores)
-        except Exception as exc:
-            from fluiq.exceptions import FluiqEvalError
-            if isinstance(exc, FluiqEvalError):
-                raise
-            import logging
-            logging.getLogger("fluiq").warning(
-                "[fluiq.eval] block-mode evaluation error: %s", repr(exc)
-            )
-    else:
-        import threading
-
-        data_snap = dict(data)
-
-        def _warn() -> None:
-            try:
-                from fluiq.evals.client import call_evaluate
-                scores = call_evaluate(data_snap)
-                if scores:
-                    thresholds = _config.get("eval_thresholds", {})
-                    import logging
-                    log = logging.getLogger("fluiq")
-                    for metric, score in scores.items():
-                        threshold = thresholds.get(metric, 0.0)
-                        if threshold > 0 and score < threshold:
-                            log.warning(
-                                "[fluiq.eval] %s score %.3f below threshold %.3f"
-                                " (trace_id=%s)",
-                                metric, score, threshold,
-                                data_snap.get("trace_id", "?"),
-                            )
-            except Exception:
-                pass
-
-        threading.Thread(target=_warn, daemon=True).start()
