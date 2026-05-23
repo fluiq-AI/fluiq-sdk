@@ -22,7 +22,7 @@ def _base_url() -> str:
     return f"{_config['endpoint']}/{_config['version']}"
 
 
-def pre_call_check(prompt_text: str) -> None:
+def pre_call_check(prompt_text: str, context: dict | None = None) -> None:
     """Call /secure/check before the LLM call.
 
     When mode='block' and the server returns allow=False, raises
@@ -36,13 +36,16 @@ def pre_call_check(prompt_text: str) -> None:
     try:
         from fluiq.integrations.shared.context import current_llm_trace_id
         trace_id = current_llm_trace_id()
+        body: dict = {
+            "api_key":  _config["api_key"],
+            "prompt":   prompt_text,
+            "trace_id": trace_id,
+        }
+        if context:
+            body["context"] = context
         r = requests.post(
             f"{_base_url()}/secure/check",
-            json={
-                "api_key":  _config["api_key"],
-                "prompt":   prompt_text,
-                "trace_id": trace_id,
-            },
+            json=body,
             timeout=2,
         )
 

@@ -69,4 +69,5 @@ def pre_call_guard(kwargs: dict[str, Any]) -> None:
         return
 
     from fluiq.security.client import pre_call_check
-    pre_call_check(prompt)
+    context = {k: kwargs.get(k) for k in ("model", "messages", "system", "tools") if kwargs.get(k) is not None}
+    pre_call_check(prompt, context=context)
