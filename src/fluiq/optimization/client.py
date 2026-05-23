@@ -88,16 +88,19 @@ def _fetch_profile() -> None:
             s.profile = profile
             redis_url = profile.get("redis_url")
             if redis_url:
-                from fluiq.optimization.caching.redis_cache import RedisCache
-                s.cache = RedisCache(
-                    redis_url,
-                    default_ttl=profile.get("ttl_seconds"),
-                    prefix=profile.get("key_prefix", "fluiq:"),
-                )
-            else:
-                print("[fluiq.optimize] profile has no redis_url — caching disabled", flush=True)
-        else:
-            print(f"[fluiq.optimize] profile fetch failed  body={resp.text[:200]!r}", flush=True)
+                try:
+                    from fluiq.optimization.caching.redis_cache import RedisCache
+                    s.cache = RedisCache(
+                        redis_url,
+                        default_ttl=profile.get("ttl_seconds"),
+                        prefix=profile.get("key_prefix", "fluiq:"),
+                    )
+                    print("[fluiq.optimize] Redis connection OK — caching enabled", flush=True)
+                except Exception as redis_exc:
+                    print(
+                        f"[fluiq.optimize] Redis connection failed — caching disabled  error={redis_exc!r}",
+                        flush=True,
+                    )
     except Exception as exc:
         print(f"[fluiq.optimize] profile fetch error  {exc!r}", flush=True)
 
