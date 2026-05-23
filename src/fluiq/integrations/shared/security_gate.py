@@ -69,5 +69,9 @@ def pre_call_guard(kwargs: dict[str, Any]) -> None:
         return
 
     from fluiq.security.client import pre_call_check
+    from fluiq.integrations.shared.context import current_parent_id
     context = {k: kwargs.get(k) for k in ("model", "messages", "system", "tools") if kwargs.get(k) is not None}
+    parent = current_parent_id()
+    if parent:
+        context["parent_id"] = parent
     pre_call_check(prompt, context=context)

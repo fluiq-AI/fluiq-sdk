@@ -1,14 +1,16 @@
-"""Optimization client — trace-analysis-driven Redis caching.
+"""Optimization client — trace-analysis-driven caching via API proxy.
 
 On first LLM call the client lazily fetches the cache profile from
 ``/optimize/profile``.  The profile is provisioned by Fluiq's backend after
 analysing the account's historical traces and contains:
 
     {
-        "redis_url":    "redis://...",   # Fluiq-hosted Redis instance
         "models":       ["gpt-4o", ...], # models whose responses to cache
         "ttl_seconds":  3600             # default TTL
     }
+
+Cache reads/writes are then proxied through ``GET /optimize/cache/{key}``
+and ``POST /optimize/cache`` so no direct Redis access is required.
 
 An empty ``models`` list means "cache all models".
 
@@ -83,24 +85,23 @@ def _fetch_profile() -> None:
         print(f"[fluiq.optimize] profile response  status={resp.status_code}", flush=True)
         if resp.status_code == 200:
             profile = resp.json()
-            print(f"[fluiq.optimize] profile  redis_url={profile.get('redis_url')!r}  key_prefix={profile.get('key_prefix')!r}  models={profile.get('models')}", flush=True)
+            print(f"[fluiq.optimize] profile  key_prefix={profile.get('key_prefix')!r}  models={profile.get('models')}", flush=True)
             s = _state()
             s.profile = profile
-            redis_url = profile.get("redis_url")
-            if redis_url:
-                try:
-                    from fluiq.optimization.caching.redis_cache import RedisCache
-                    s.cache = RedisCache(
-                        redis_url,
-                        default_ttl=profile.get("ttl_seconds"),
-                        prefix=profile.get("key_prefix", "fluiq:"),
-                    )
-                    print("[fluiq.optimize] Redis connection OK — caching enabled", flush=True)
-                except Exception as redis_exc:
-                    print(
-                        f"[fluiq.optimize] Redis connection failed — caching disabled  error={redis_exc!r}",
-                        flush=True,
-                    )
+            try:
+                from fluiq.optimization.caching.api_cache import ApiCache
+                cfg = _config()
+                s.cache = ApiCache(
+                    cfg["endpoint"],
+                    cfg["api_key"],
+                    default_ttl=profile.get("ttl_seconds"),
+                )
+                print("[fluiq.optimize] API cache proxy enabled — caching enabled", flush=True)
+            except Exception as cache_exc:
+                print(
+                    f"[fluiq.optimize] cache setup failed — caching disabled  error={cache_exc!r}",
+                    flush=True,
+                )
     except Exception as exc:
         print(f"[fluiq.optimize] profile fetch error  {exc!r}", flush=True)
 

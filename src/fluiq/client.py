@@ -13,7 +13,7 @@ def send_event(data):
                 "api_key": _config["api_key"],
                 "event":data
             },
-            timeout=1
+            timeout=5
         )
         r.raise_for_status()
     except Exception as e:
