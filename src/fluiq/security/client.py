@@ -28,14 +28,20 @@ def pre_call_check(prompt_text: str) -> None:
     When mode='block' and the server returns allow=False, raises
     FluiqSecurityError.  In all other cases (network error, 402, warn mode)
     returns silently so the LLM call proceeds normally.
+
+    Passes the current trace_id so the API can publish the blocked trace
+    event directly, transitioning the dashboard row from "running" to "blocked".
     """
     mode = _config.get("secure_mode", "warn")
     try:
+        from fluiq.integrations.shared.context import current_llm_trace_id
+        trace_id = current_llm_trace_id()
         r = requests.post(
             f"{_base_url()}/secure/check",
             json={
-                "api_key": _config["api_key"],
-                "prompt":  prompt_text,
+                "api_key":  _config["api_key"],
+                "prompt":   prompt_text,
+                "trace_id": trace_id,
             },
             timeout=2,
         )
