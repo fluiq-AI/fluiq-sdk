@@ -78,34 +78,21 @@ def _fetch_profile() -> None:
     """Fetch the optimization profile from the Fluiq backend (non-blocking)."""
     cfg = _config()
     url = f"{cfg['endpoint']}/{cfg['version']}/optimize/profile"
-    print(f"[fluiq.optimize] fetching profile  url={url!r}", flush=True)
-    try:
-        import requests
-        resp = requests.get(url, headers={"x-api-key": cfg["api_key"]}, timeout=5.0)
-        print(f"[fluiq.optimize] profile response  status={resp.status_code}", flush=True)
-        if resp.status_code == 200:
-            profile = resp.json()
-            print(f"[fluiq.optimize] profile  key_prefix={profile.get('key_prefix')!r}  models={profile.get('models')}", flush=True)
-            s = _state()
-            s.profile = profile
-            try:
-                from fluiq.optimization.caching.api_cache import ApiCache
-                cfg = _config()
-                s.cache = ApiCache(
-                    cfg["endpoint"],
-                    cfg["api_key"],
-                    default_ttl=profile.get("ttl_seconds"),
-                )
-                print("[fluiq.optimize] API cache proxy enabled — caching enabled", flush=True)
-            except Exception as cache_exc:
-                print(
-                    f"[fluiq.optimize] cache setup failed — caching disabled  error={cache_exc!r}",
-                    flush=True,
-                )
-    except Exception as exc:
-        print(f"[fluiq.optimize] profile fetch error  {exc!r}", flush=True)
 
-
+    import requests
+    resp = requests.get(url, headers={"x-api-key": cfg["api_key"]}, timeout=5.0)
+    if resp.status_code == 200:
+        profile = resp.json()
+        s = _state()
+        s.profile = profile
+        from fluiq.optimization.caching.api_cache import ApiCache
+        cfg = _config()
+        s.cache = ApiCache(
+            cfg["endpoint"],
+            cfg["api_key"],
+            default_ttl=profile.get("ttl_seconds"),
+        )
+               
 # ---------------------------------------------------------------------------
 # Key helpers — must produce the same key for pre-call kwargs and post-call
 # trace dicts so lookup and populate are in sync.
