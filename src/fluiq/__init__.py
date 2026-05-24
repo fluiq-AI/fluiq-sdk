@@ -1,6 +1,7 @@
 from fluiq.config import init as _init, ENDPOINT, API_KEY, VERSION
 from fluiq.decorator import trace
 from fluiq.exceptions import FluiqSecurityError, FluiqEvalError
+from fluiq.prompts import Prompt
 
 def instrument(
     api_key:  str = API_KEY,
@@ -124,3 +125,40 @@ def secure(mode: str = "warn") -> None:
     from fluiq.config import _config
     _config["secure"]      = True
     _config["secure_mode"] = mode
+
+
+def fetch_prompt(slug: str, env: str = "production") -> Prompt:
+    """Fetch a deployed prompt template from the Fluiq dashboard.
+
+    Must be called after ``fluiq.instrument()``.
+
+    Parameters
+    ----------
+    slug : str
+        The prompt's URL-safe identifier as set in the dashboard
+        (e.g. ``"support-reply"``).
+    env : "production" | "staging" | "development"
+        Which environment snapshot to load. Defaults to ``"production"``.
+
+    Returns
+    -------
+    Prompt
+        A :class:`Prompt` object whose ``.render(**variables)`` method
+        substitutes ``{variable}`` placeholders and returns the final string.
+
+    Raises
+    ------
+    requests.HTTPError
+        404 if the prompt is not deployed to the requested environment.
+        401 if the API key is invalid.
+    """
+    import requests
+    from fluiq.config import _config
+
+    r = requests.get(
+        f"{_config['endpoint']}/{_config['version']}/prompts/fetch/{slug}",
+        params={"api_key": _config["api_key"], "env": env},
+        timeout=10,
+    )
+    r.raise_for_status()
+    return Prompt(r.json())
