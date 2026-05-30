@@ -22,7 +22,7 @@ def _base_url() -> str:
     return f"{_config['endpoint']}/{_config['version']}"
 
 
-def pre_call_check(prompt_text: str, context: dict | None = None) -> None:
+def pre_call_check(prompt_text: str, context: dict | None = None, guardrail: str = "default") -> None:
     """Call /secure/check before the LLM call.
 
     When mode='block' and the server returns allow=False, raises
@@ -37,9 +37,10 @@ def pre_call_check(prompt_text: str, context: dict | None = None) -> None:
         from fluiq.integrations.shared.context import current_llm_trace_id
         trace_id = current_llm_trace_id()
         body: dict = {
-            "api_key":  _config["api_key"],
-            "prompt":   prompt_text,
-            "trace_id": trace_id,
+            "api_key":   _config["api_key"],
+            "prompt":    prompt_text,
+            "trace_id":  trace_id,
+            "guardrail": guardrail,
         }
         if context:
             body["context"] = context

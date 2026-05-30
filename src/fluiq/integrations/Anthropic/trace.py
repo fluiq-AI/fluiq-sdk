@@ -25,6 +25,7 @@ from fluiq.integrations.Anthropic.helper.mcp_trace import (
     _extract_mcp_blocks,
     _extract_mcp_results_from_messages,
 )
+from fluiq.integrations.Anthropic.helper.prompt_cache import maybe_inject_anthropic_cache_control
 from fluiq.integrations.Anthropic.helper.streaming import _MessageStreamAccumulator
 from fluiq.integrations.OpenAI.helper.streaming import _StreamProxy, _AsyncStreamProxy
 
@@ -77,6 +78,8 @@ def _emit_messages_trace(kwargs, response, start, end, tool_call_latencies):
             "completion": usage.output_tokens,
             "total": total_tokens,
         } if usage else None,
+        prompt_cache_read_tokens=getattr(usage, "cache_read_input_tokens", None) if usage else None,
+        prompt_cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", None) if usage else None,
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -105,6 +108,8 @@ def _emit_messages_stream_trace(kwargs, acc, start, end, tool_call_latencies):
         latency=end - start,
         parent_id=current_parent_id(),
         tokens=data["tokens"],
+        prompt_cache_read_tokens=data.get("prompt_cache_read_tokens"),
+        prompt_cache_creation_tokens=data.get("prompt_cache_creation_tokens"),
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -129,6 +134,49 @@ def _emit_messages_error(kwargs, error, start, end, api=None):
 
 
 def _wrap_messages_stream(stream, kwargs, start, tool_call_latencies, async_=False, trace_id=None):
+    from fluiq.config import _config
+
+    _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+
+    if _needs_gate and not async_:
+        acc = _MessageStreamAccumulator()
+        chunks = []
+        try:
+            for chunk in stream:
+                acc.feed(chunk)
+                chunks.append(chunk)
+        except Exception as e:
+            _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+            raise
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            _emit_messages_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
+        return iter(chunks)
+
+    if _needs_gate and async_:
+        async def _buffered():
+            acc = _MessageStreamAccumulator()
+            chunks = []
+            try:
+                async for chunk in stream:
+                    acc.feed(chunk)
+                    chunks.append(chunk)
+            except Exception as e:
+                _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
+                raise
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_messages_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+            for chunk in chunks:
+                yield chunk
+        return _buffered()
+
     acc = _MessageStreamAccumulator()
 
     def on_chunk(chunk):
@@ -172,6 +220,17 @@ def _build_messages_wrapper(original):
         start = time.time()
         try:
             pre_call_guard(kwargs)
+
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_anthropic_messages
+                learn_from_anthropic_messages(kwargs.get("messages") or [])
+            except Exception:
+                pass
+
+            try:
+                maybe_inject_anthropic_cache_control(kwargs)
+            except Exception:
+                pass
 
             cached = pre_call_optimize(kwargs, "anthropic")
             if cached is not None:
@@ -233,6 +292,17 @@ def _build_async_messages_wrapper(original):
         start = time.time()
         try:
             pre_call_guard(kwargs)
+
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_anthropic_messages
+                learn_from_anthropic_messages(kwargs.get("messages") or [])
+            except Exception:
+                pass
+
+            try:
+                maybe_inject_anthropic_cache_control(kwargs)
+            except Exception:
+                pass
 
             cached = pre_call_optimize(kwargs, "anthropic")
             if cached is not None:
@@ -360,6 +430,10 @@ def _build_stream_helper_wrapper(original):
         start = time.time()
         try:
             try:
+                maybe_inject_anthropic_cache_control(kwargs)
+            except Exception:
+                pass
+            try:
                 manager = original(self, *args, **kwargs)
             except Exception as e:
                 _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
@@ -385,6 +459,10 @@ def _build_async_stream_helper_wrapper(original):
         )
         start = time.time()
         try:
+            try:
+                maybe_inject_anthropic_cache_control(kwargs)
+            except Exception:
+                pass
             try:
                 manager = original(self, *args, **kwargs)
             except Exception as e:

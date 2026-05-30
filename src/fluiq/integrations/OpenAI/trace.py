@@ -45,6 +45,8 @@ def _emit_chat_trace(kwargs, response, start, end, tool_call_latencies):
             text = extracted
             break
 
+    _details = getattr(usage, "prompt_tokens_details", None) if usage else None
+    _cached = getattr(_details, "cached_tokens", None) if _details else None
     payload = LogTrace(
         type="llm",
         integration=TraceType.OpenAI,
@@ -64,6 +66,7 @@ def _emit_chat_trace(kwargs, response, start, end, tool_call_latencies):
             "completion": usage.completion_tokens,
             "total": usage.total_tokens,
         } if usage else None,
+        prompt_cached_tokens=_cached,
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -87,6 +90,7 @@ def _emit_chat_stream_trace(kwargs, acc, start, end, tool_call_latencies):
         latency=end - start,
         parent_id=current_parent_id(),
         tokens=data["usage"],
+        prompt_cached_tokens=data.get("prompt_cached_tokens"),
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -180,6 +184,52 @@ def _emit_responses_stream_trace(kwargs, acc, start, end):
 
 
 def _wrap_chat_stream(stream, kwargs, start, tool_call_latencies, async_=False, trace_id=None):
+    from fluiq.config import _config
+
+    # When secure mode='block', buffer the entire stream before yielding any chunk.
+    # This lets the response gate fire before the caller receives any content.
+    _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+
+    if _needs_gate and not async_:
+        acc = _ChatStreamAccumulator()
+        chunks = []
+        try:
+            for chunk in stream:
+                acc.feed(chunk)
+                chunks.append(chunk)
+        except Exception as e:
+            _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.stream")
+            raise
+        tok = push_llm_trace_id(trace_id) if trace_id else None
+        try:
+            # May raise FluiqSecurityError if response gate blocks
+            _emit_chat_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+        finally:
+            if tok is not None:
+                pop_llm_trace_id(tok)
+        return iter(chunks)
+
+    if _needs_gate and async_:
+        async def _buffered():
+            acc = _ChatStreamAccumulator()
+            chunks = []
+            try:
+                async for chunk in stream:
+                    acc.feed(chunk)
+                    chunks.append(chunk)
+            except Exception as e:
+                _emit_chat_error(kwargs, e, start, time.time(), api="chat.completions.stream")
+                raise
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_chat_stream_trace(kwargs, acc, start, time.time(), tool_call_latencies)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+            for chunk in chunks:
+                yield chunk
+        return _buffered()
+
     acc = _ChatStreamAccumulator()
 
     def on_chunk(chunk):
@@ -319,6 +369,12 @@ def patch_openai():
                     _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions")
                 raise
 
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_openai_messages
+                learn_from_openai_messages(kwargs.get("messages") or [])
+            except Exception:
+                pass
+
             cached = pre_call_optimize(kwargs, "openai")
             if cached is not None:
                 end = time.time()
@@ -387,6 +443,12 @@ def patch_openai_async():
                 if isinstance(sec_exc, FluiqSecurityError):
                     _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="chat.completions")
                 raise
+
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_openai_messages
+                learn_from_openai_messages(kwargs.get("messages") or [])
+            except Exception:
+                pass
 
             cached = pre_call_optimize(kwargs, "openai")
             if cached is not None:

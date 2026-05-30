@@ -1,6 +1,6 @@
 import uuid
 
-from fluiq.client import send_event
+from fluiq.client import send_event, send_event_gated
 from fluiq.integrations.shared.chain import compute_chain_id
 from fluiq.integrations.shared.context import current_llm_trace_id, current_parent_id
 
@@ -27,10 +27,14 @@ def log_trace(data):
         # Remove legacy local-scan flag if present (no-op, kept for compat)
         data.pop("_security_scan", None)
 
-        if _config.get("secure", False) and not data.pop("_security_pre_blocked", False):
+        _is_pre_blocked = data.pop("_security_pre_blocked", False)
+        if _config.get("secure", False) and not _is_pre_blocked:
             # Embed security config so /ingest fans out to the evaluator worker.
             # The worker runs the full post-call scan asynchronously.
-            data["_security_config"] = {"mode": _config.get("secure_mode", "warn")}
+            data["_security_config"] = {
+                "mode":      _config.get("secure_mode", "warn"),
+                "guardrail": _config.get("secure_guardrail", "default"),
+            }
 
         is_cache_hit = data.pop("_cache_hit", False)
         if is_cache_hit:
@@ -64,7 +68,26 @@ def log_trace(data):
                         "thresholds": _config.get("eval_thresholds", {}),
                     }
 
-        send_event(data)
+        # Response gate: when secure mode='block', read /ingest's return value so
+        # we can raise FluiqSecurityError before the LLM output reaches the caller.
+        # Warm path (scan_responses=False on the server) returns {} immediately.
+        _use_gate = (
+            _config.get("secure")
+            and _config.get("secure_mode") == "block"
+            and not _is_pre_blocked
+            and data.get("type") == "llm"
+        )
+        if _use_gate:
+            gate = send_event_gated(data)
+            if gate.get("response_blocked"):
+                from fluiq.exceptions import FluiqSecurityError
+                raise FluiqSecurityError(
+                    block_reason=gate.get("block_reason", "Response blocked by fluiq.secure()"),
+                    risk_level=gate.get("risk_level", "high"),
+                    attack_types=gate.get("attack_types", []),
+                )
+        else:
+            send_event(data)
 
         # Block mode: thin synchronous call to /evaluate after trace is stored.
         # Raises FluiqEvalError if any metric falls below its threshold.
@@ -85,7 +108,7 @@ def log_trace(data):
                             raise FluiqEvalError(failures, scores)
 
     except Exception as exc:
-        from fluiq.exceptions import FluiqEvalError
-        if isinstance(exc, FluiqEvalError):
+        from fluiq.exceptions import FluiqEvalError, FluiqSecurityError
+        if isinstance(exc, (FluiqEvalError, FluiqSecurityError)):
             raise
         pass

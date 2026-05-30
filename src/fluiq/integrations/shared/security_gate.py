@@ -16,13 +16,20 @@ from fluiq.config import _config
 
 
 def _extract_prompt(kwargs: dict[str, Any]) -> str:
-    """Best-effort prompt extraction across OpenAI / Anthropic / Gemini shapes."""
-    # OpenAI chat completions
+    """Extract user-controlled input for security scanning.
+
+    System messages are developer-written and excluded to prevent false
+    positives on legitimate assistant instructions.  Only user and tool
+    messages (user-controlled content) are scanned pre-call.
+    """
+    # OpenAI chat completions — scan user / tool roles only
     messages = kwargs.get("messages")
     if messages and isinstance(messages, list):
         parts: list[str] = []
         for m in messages:
             if not isinstance(m, dict):
+                continue
+            if m.get("role") not in ("user", "tool"):
                 continue
             content = m.get("content")
             if isinstance(content, str):
@@ -33,15 +40,27 @@ def _extract_prompt(kwargs: dict[str, Any]) -> str:
                         parts.append(block.get("text", ""))
         return "\n".join(parts)
 
-    # OpenAI responses API / Gemini
+    # OpenAI responses API / Gemini contents list
     inp = kwargs.get("input") or kwargs.get("contents")
     if inp:
         if isinstance(inp, str):
             return inp
         if isinstance(inp, list):
-            return "\n".join(str(i) for i in inp)
+            # Gemini: filter to user-role parts; fallback to raw join for strings
+            user_parts: list[str] = []
+            for item in inp:
+                if isinstance(item, str):
+                    user_parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("role") in ("user", None):
+                        for p in (item.get("parts") or []):
+                            if isinstance(p, str):
+                                user_parts.append(p)
+                            elif isinstance(p, dict) and p.get("text"):
+                                user_parts.append(p["text"])
+            return "\n".join(user_parts) if user_parts else "\n".join(str(i) for i in inp)
 
-    # Anthropic
+    # Anthropic — system is a separate kwarg; messages already filtered above
     prompt = kwargs.get("prompt")
     if isinstance(prompt, str):
         return prompt
@@ -74,4 +93,5 @@ def pre_call_guard(kwargs: dict[str, Any]) -> None:
     parent = current_parent_id()
     if parent:
         context["parent_id"] = parent
-    pre_call_check(prompt, context=context)
+    guardrail = _config.get("secure_guardrail", "default")
+    pre_call_check(prompt, context=context, guardrail=guardrail)

@@ -98,7 +98,7 @@ def eval(
     _config["eval_judge_model"] = judge_model
 
 
-def secure(mode: str = "warn") -> None:
+def secure(mode: str = "warn", *, guardrail: str = "default") -> None:
     """Activate server-side security scanning (requires Team plan or above).
 
     Must be called after ``fluiq.instrument()``.
@@ -116,6 +116,11 @@ def secure(mode: str = "warn") -> None:
         and the LLM call is never executed.  Post-call scanning still runs
         on allowed calls.
 
+    guardrail : str
+        Slug of the named guardrail policy to use (configured in the dashboard).
+        Defaults to ``"default"``.  Unknown slugs fall back to ``"default"``
+        on the server side.
+
     Raises ``FluiqSecurityError`` at LLM call time when mode is ``"block"``
     and an attack is detected.  Free-tier keys receive a 402 and fall back
     to warn behaviour automatically.
@@ -123,8 +128,9 @@ def secure(mode: str = "warn") -> None:
     if mode not in ("warn", "block"):
         raise ValueError(f"fluiq.secure() mode must be 'warn' or 'block', got {mode!r}")
     from fluiq.config import _config
-    _config["secure"]      = True
-    _config["secure_mode"] = mode
+    _config["secure"]           = True
+    _config["secure_mode"]      = mode
+    _config["secure_guardrail"] = guardrail
 
 
 def fetch_prompt(slug: str, env: str = "production") -> Prompt:
@@ -162,3 +168,23 @@ def fetch_prompt(slug: str, env: str = "production") -> Prompt:
     )
     r.raise_for_status()
     return Prompt(r.json())
+
+
+def lookup_tool_result(tool_name: str, args):
+    """Return a cached tool result, or ``None`` if not in cache.
+
+    *args* can be a dict or a JSON string.  Keys are sorted before hashing so
+    argument order does not matter.
+
+    Typical usage inside a tool execution function::
+
+        result = fluiq.lookup_tool_result("get_weather", {"location": "London"})
+        if result is not None:
+            return result
+        return call_weather_api("London")
+    """
+    try:
+        from fluiq.optimization.client import lookup_tool_cache
+        return lookup_tool_cache(tool_name, args)
+    except Exception:
+        return None

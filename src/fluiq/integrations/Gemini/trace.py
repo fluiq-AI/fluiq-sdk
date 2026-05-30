@@ -81,6 +81,7 @@ def _emit_genai_trace(kwargs, response, start, end):
         latency=end - start,
         parent_id=current_parent_id(),
         tokens=_usage_dict(usage),
+        prompt_cached_tokens=getattr(usage, "cached_content_token_count", None) if usage else None,
     )
     log_trace(payload.model_dump(mode="json"))
 
@@ -128,6 +129,12 @@ def patch_genai():
             _tools_norm, _tool_config_norm = _extract_request_tools(kwargs)
             _mcp_servers_norm = _extract_mcp_servers(kwargs)
             _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_gemini_contents
+                learn_from_gemini_contents(kwargs.get("contents") or [])
+            except Exception:
+                pass
+
             cached = pre_call_optimize(_lookup_kw, "gemini")
             if cached is not None:
                 end = time.time()
@@ -193,6 +200,12 @@ def patch_genai_async():
             _tools_norm, _tool_config_norm = _extract_request_tools(kwargs)
             _mcp_servers_norm = _extract_mcp_servers(kwargs)
             _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
+            try:
+                from fluiq.integrations.shared.tool_cache import learn_from_gemini_contents
+                learn_from_gemini_contents(kwargs.get("contents") or [])
+            except Exception:
+                pass
+
             cached = pre_call_optimize(_lookup_kw, "gemini")
             if cached is not None:
                 end = time.time()
@@ -250,6 +263,7 @@ def patch_genai_stream():
     original = Models.generate_content_stream
 
     def wrapped(self, *args, **kwargs):
+        from fluiq.config import _config
         if is_in_langchain_llm():
             yield from original(self, *args, **kwargs)
             return
@@ -262,23 +276,39 @@ def patch_genai_stream():
             contents=_to_jsonable(kwargs.get("contents")),
         )
         start = time.time()
-        errored = False
         try:
             pre_call_guard(kwargs)
-            try:
-                for chunk in original(self, *args, **kwargs):
-                    agg.feed(chunk)
-                    yield chunk
-            except Exception as e:
-                errored = True
-                _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
-                raise
-            finally:
-                if not errored:
-                    end = time.time()
-                    latest, _ = agg.assemble()
-                    if latest is not None:
-                        _emit_genai_trace(kwargs, latest, start, end)
+            _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+            if _needs_gate:
+                chunks = []
+                try:
+                    for chunk in original(self, *args, **kwargs):
+                        agg.feed(chunk)
+                        chunks.append(chunk)
+                except Exception as e:
+                    _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                    raise
+                end = time.time()
+                latest, _ = agg.assemble()
+                if latest is not None:
+                    _emit_genai_trace(kwargs, latest, start, end)  # may raise FluiqSecurityError
+                yield from chunks
+            else:
+                errored = False
+                try:
+                    for chunk in original(self, *args, **kwargs):
+                        agg.feed(chunk)
+                        yield chunk
+                except Exception as e:
+                    errored = True
+                    _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                    raise
+                finally:
+                    if not errored:
+                        end = time.time()
+                        latest, _ = agg.assemble()
+                        if latest is not None:
+                            _emit_genai_trace(kwargs, latest, start, end)
         finally:
             pop_llm_trace_id(ctx_tok)
 
@@ -290,6 +320,7 @@ def patch_genai_stream_async():
     original = AsyncModels.generate_content_stream
 
     async def wrapped(self, *args, **kwargs):
+        from fluiq.config import _config
         if is_in_langchain_llm():
             async for chunk in original(self, *args, **kwargs):
                 yield chunk
@@ -304,23 +335,40 @@ def patch_genai_stream_async():
             contents=_to_jsonable(kwargs.get("contents")),
         )
         start = time.time()
-        errored = False
         try:
             pre_call_guard(kwargs)
-            try:
-                async for chunk in original(self, *args, **kwargs):
-                    agg.feed(chunk)
+            _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+            if _needs_gate:
+                chunks = []
+                try:
+                    async for chunk in original(self, *args, **kwargs):
+                        agg.feed(chunk)
+                        chunks.append(chunk)
+                except Exception as e:
+                    _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                    raise
+                end = time.time()
+                latest, _ = agg.assemble()
+                if latest is not None:
+                    _emit_genai_trace(kwargs, latest, start, end)  # may raise FluiqSecurityError
+                for chunk in chunks:
                     yield chunk
-            except Exception as e:
-                errored = True
-                _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
-                raise
-            finally:
-                if not errored:
-                    end = time.time()
-                    latest, _ = agg.assemble()
-                    if latest is not None:
-                        _emit_genai_trace(kwargs, latest, start, end)
+            else:
+                errored = False
+                try:
+                    async for chunk in original(self, *args, **kwargs):
+                        agg.feed(chunk)
+                        yield chunk
+                except Exception as e:
+                    errored = True
+                    _emit_genai_error(kwargs, e, start, time.time(), api="generate_content_stream")
+                    raise
+                finally:
+                    if not errored:
+                        end = time.time()
+                        latest, _ = agg.assemble()
+                        if latest is not None:
+                            _emit_genai_trace(kwargs, latest, start, end)
         finally:
             pop_llm_trace_id(ctx_tok)
 
@@ -354,12 +402,42 @@ def _emit_vertex_trace(self, kwargs, request_contents, response, start, end, too
         latency=end - start,
         parent_id=current_parent_id(),
         tokens=_usage_dict(usage),
+        prompt_cached_tokens=getattr(usage, "cached_content_token_count", None) if usage else None,
     )
     log_trace(payload.model_dump(mode="json"))
 
 
 def _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start, trace_id=None):
+    from fluiq.config import _config
     agg = _GenaiStreamAggregator()
+    _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+
+    if _needs_gate:
+        chunks = []
+        try:
+            for chunk in stream:
+                agg.feed(chunk)
+                chunks.append(chunk)
+        except Exception as e:
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+            raise
+        end = time.time()
+        latest, _ = agg.assemble()
+        if latest is not None:
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+        yield from chunks
+        return
+
     errored = False
     try:
         for chunk in stream:
@@ -388,7 +466,37 @@ def _vertex_stream_passthrough(self, kwargs, request_contents, tool_call_latenci
 
 
 async def _vertex_async_stream_passthrough(self, kwargs, request_contents, tool_call_latencies, stream, start, trace_id=None):
+    from fluiq.config import _config
     agg = _GenaiStreamAggregator()
+    _needs_gate = _config.get("secure") and _config.get("secure_mode") == "block"
+
+    if _needs_gate:
+        chunks = []
+        try:
+            async for chunk in stream:
+                agg.feed(chunk)
+                chunks.append(chunk)
+        except Exception as e:
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_vertex_error(self, kwargs, request_contents, e, start, time.time())
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+            raise
+        end = time.time()
+        latest, _ = agg.assemble()
+        if latest is not None:
+            tok = push_llm_trace_id(trace_id) if trace_id else None
+            try:
+                _emit_vertex_trace(self, kwargs, request_contents, latest, start, end, tool_call_latencies)
+            finally:
+                if tok is not None:
+                    pop_llm_trace_id(tok)
+        for chunk in chunks:
+            yield chunk
+        return
+
     errored = False
     try:
         async for chunk in stream:
@@ -687,3 +795,101 @@ def patch_vertexai_count_tokens_async():
         return response
 
     GenerativeModel.count_tokens_async = wrapped
+
+
+def patch_genai_embeddings():
+    from google.genai.models import Models
+    if not hasattr(Models, "embed_content"):
+        return
+    original = Models.embed_content
+
+    def wrapped(self, *args, **kwargs):
+        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
+        start = time.time()
+        cached = pre_call_optimize_embedding(kwargs, "gemini")
+        if cached is not None:
+            log_trace({
+                "type":        "llm",
+                "integration": TraceType.Gemini.value,
+                "api":         "embeddings",
+                "model":       kwargs.get("model"),
+                "contents":    _to_jsonable(kwargs.get("contents")),
+                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
+                "latency":     time.time() - start,
+                "parent_id":   current_parent_id(),
+                "_cache_hit":  True,
+                "tokens":      None,
+            })
+            return cached
+        response = original(self, *args, **kwargs)
+        end = time.time()
+        embeddings = getattr(response, "embeddings", []) or []
+        serialized = {
+            "data": [
+                {"values": list(emb.values), "index": i}
+                for i, emb in enumerate(embeddings)
+            ]
+        }
+        log_trace({
+            "type":        "llm",
+            "integration": TraceType.Gemini.value,
+            "api":         "embeddings",
+            "model":       kwargs.get("model"),
+            "contents":    _to_jsonable(kwargs.get("contents")),
+            "response":    serialized,
+            "latency":     end - start,
+            "parent_id":   current_parent_id(),
+            "tokens":      None,
+        })
+        return response
+
+    Models.embed_content = wrapped
+
+
+def patch_genai_embeddings_async():
+    from google.genai.models import AsyncModels
+    if not hasattr(AsyncModels, "embed_content"):
+        return
+    original = AsyncModels.embed_content
+
+    async def wrapped(self, *args, **kwargs):
+        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
+        start = time.time()
+        cached = pre_call_optimize_embedding(kwargs, "gemini")
+        if cached is not None:
+            log_trace({
+                "type":        "llm",
+                "integration": TraceType.Gemini.value,
+                "api":         "embeddings",
+                "model":       kwargs.get("model"),
+                "contents":    _to_jsonable(kwargs.get("contents")),
+                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
+                "latency":     time.time() - start,
+                "parent_id":   current_parent_id(),
+                "_cache_hit":  True,
+                "tokens":      None,
+            })
+            return cached
+        response = await original(self, *args, **kwargs)
+        end = time.time()
+        embeddings = getattr(response, "embeddings", []) or []
+        serialized = {
+            "data": [
+                {"values": list(emb.values), "index": i}
+                for i, emb in enumerate(embeddings)
+            ]
+        }
+        log_trace({
+            "type":        "llm",
+            "integration": TraceType.Gemini.value,
+            "api":         "embeddings",
+            "model":       kwargs.get("model"),
+            "contents":    _to_jsonable(kwargs.get("contents")),
+            "response":    serialized,
+            "latency":     end - start,
+            "parent_id":   current_parent_id(),
+            "tokens":      None,
+        })
+        return response
+
+    AsyncModels.embed_content = wrapped

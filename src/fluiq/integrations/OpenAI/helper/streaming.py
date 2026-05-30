@@ -52,12 +52,15 @@ class _ChatStreamAccumulator:
         tool_calls = [self.tool_calls[k] for k in sorted(self.tool_calls.keys())] or None
         thinking = self.thinking_parts or None
         usage = None
+        cached = None
         if self.usage:
             usage = {
                 "prompt": getattr(self.usage, "prompt_tokens", None),
                 "completion": getattr(self.usage, "completion_tokens", None),
                 "total": getattr(self.usage, "total_tokens", None),
             }
+            _details = getattr(self.usage, "prompt_tokens_details", None)
+            cached = getattr(_details, "cached_tokens", None) if _details else None
         return {
             "response": text,
             "tool_calls": tool_calls,
@@ -65,6 +68,7 @@ class _ChatStreamAccumulator:
             "finish_reasons": self.finish_reasons or None,
             "usage": usage,
             "model": self.model,
+            "prompt_cached_tokens": cached,
         }
 
 

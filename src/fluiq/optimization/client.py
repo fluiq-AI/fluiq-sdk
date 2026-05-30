@@ -88,7 +88,7 @@ def _fetch_profile() -> None:
         from fluiq.optimization.caching.api_cache import ApiCache
         cfg = _config()
         s.cache = ApiCache(
-            cfg["endpoint"],
+            f"{cfg['endpoint']}/{cfg['version']}",
             cfg["api_key"],
             default_ttl=profile.get("ttl_seconds"),
         )
@@ -118,7 +118,7 @@ def _embedding_cache_key(d: dict[str, Any]) -> str:
     return make_key(
         "embedding",
         d.get("model", ""),
-        d.get("input") or d.get("prompt") or "",
+        d.get("input") or d.get("prompt") or d.get("contents") or d.get("texts") or "",
     )
 
 
@@ -245,6 +245,51 @@ def populate_vectorstore_cache(cache_key: str, result: dict) -> None:
     s.cache.set(cache_key, {"type": "vectorstore", "result": result})
 
 
+def _tool_cache_key(tool_name: str, args_json: str) -> str:
+    return make_key("tool", tool_name, args_json)
+
+
+def lookup_tool_cache(tool_name: str, args: "dict | str") -> Optional[Any]:
+    """Return the cached result for a tool call, or ``None`` on miss.
+
+    *args* can be a dict (recommended) or a JSON string.  Keys are sorted
+    before hashing so ``{"b": 2, "a": 1}`` and ``{"a": 1, "b": 2}`` produce
+    the same cache key.
+    """
+    import json as _json
+    _ensure_initialized()
+    s = _state()
+    if s.cache is None:
+        return None
+    if isinstance(args, dict):
+        args_str = _json.dumps(args, sort_keys=True)
+    else:
+        try:
+            args_str = _json.dumps(_json.loads(str(args)), sort_keys=True)
+        except Exception:
+            args_str = str(args)
+    raw = s.cache.get(_tool_cache_key(tool_name, args_str))
+    if isinstance(raw, dict) and raw.get("type") == "tool":
+        return raw.get("result")
+    return None
+
+
+def populate_tool_cache(tool_name: str, args: "dict | str", result: Any) -> None:
+    """Store a tool call result in the cache keyed by (tool_name, args)."""
+    import json as _json
+    s = _state()
+    if s.cache is None:
+        return
+    if isinstance(args, dict):
+        args_str = _json.dumps(args, sort_keys=True)
+    else:
+        try:
+            args_str = _json.dumps(_json.loads(str(args)), sort_keys=True)
+        except Exception:
+            args_str = str(args)
+    s.cache.set(_tool_cache_key(tool_name, args_str), {"type": "tool", "result": result})
+
+
 def _function_cache_key(func_name: str, args_str: str) -> str:
     return make_key("function", func_name, args_str)
 
@@ -271,6 +316,99 @@ def populate_function_cache(func_name: str, args_str: str, result: Any) -> None:
     if s.cache is None:
         return
     s.cache.set(_function_cache_key(func_name, args_str), {"type": "function", "result": result})
+
+
+# ---------------------------------------------------------------------------
+# MCP list_tools() cache  (keyed by server URL)
+# ---------------------------------------------------------------------------
+
+def _mcp_list_tools_key(server_url: str) -> str:
+    return make_key("mcp_list_tools", server_url)
+
+
+def lookup_mcp_tools_cache(server_url: str) -> Optional[list]:
+    """Return the cached list_tools() result for this MCP server, or None on miss."""
+    _ensure_initialized()
+    s = _state()
+    if s.cache is None:
+        return None
+    raw = s.cache.get(_mcp_list_tools_key(server_url))
+    if isinstance(raw, dict) and raw.get("type") == "mcp_list_tools":
+        return raw.get("tools")
+    return None
+
+
+def populate_mcp_tools_cache(server_url: str, tools: list) -> None:
+    """Cache the list_tools() response for this MCP server."""
+    s = _state()
+    if s.cache is None:
+        return
+    s.cache.set(_mcp_list_tools_key(server_url), {"type": "mcp_list_tools", "tools": tools})
+
+
+def invalidate_mcp_tools_cache(server_url: str) -> None:
+    """Evict the cached list_tools() for this server — called on re-initialize (server restart)."""
+    _ensure_initialized()
+    s = _state()
+    if s.cache is None:
+        return
+    s.cache.delete(_mcp_list_tools_key(server_url))
+
+
+# ---------------------------------------------------------------------------
+# MCP call_tool() cache  (keyed by server URL + tool name + args hash)
+# ---------------------------------------------------------------------------
+
+def _mcp_call_key(server_url: str, tool_name: str, args_json: str) -> str:
+    return make_key("mcp_call", server_url, tool_name, args_json)
+
+
+def lookup_mcp_call_cache(server_url: str, tool_name: str, args: "dict | str") -> Optional[dict]:
+    """Return the cached call_tool() payload for (server_url, tool_name, args), or None on miss.
+
+    Returns the full payload dict so the caller can reconstruct the result.
+    """
+    import json as _json
+    _ensure_initialized()
+    s = _state()
+    if s.cache is None:
+        return None
+    if isinstance(args, dict):
+        args_str = _json.dumps(args, sort_keys=True)
+    else:
+        try:
+            args_str = _json.dumps(_json.loads(str(args)), sort_keys=True)
+        except Exception:
+            args_str = str(args)
+    raw = s.cache.get(_mcp_call_key(server_url, tool_name, args_str))
+    if isinstance(raw, dict) and raw.get("type") == "mcp_call":
+        return raw
+    return None
+
+
+def populate_mcp_call_cache(
+    server_url: str,
+    tool_name: str,
+    args: "dict | str",
+    content: list,
+    is_error: bool = False,
+) -> None:
+    """Store an MCP call_tool() result in Redis."""
+    import json as _json
+    s = _state()
+    if s.cache is None:
+        return
+    if isinstance(args, dict):
+        args_str = _json.dumps(args, sort_keys=True)
+    else:
+        try:
+            args_str = _json.dumps(_json.loads(str(args)), sort_keys=True)
+        except Exception:
+            args_str = str(args)
+    s.cache.set(
+        _mcp_call_key(server_url, tool_name, args_str),
+        {"type": "mcp_call", "content": content, "isError": is_error},
+    )
 
 
 def populate_cache(data: dict[str, Any]) -> None:

@@ -190,6 +190,7 @@ def _build_mock(payload: dict, provider: str, model: str) -> Any:
         return SimpleNamespace(
             candidates=[candidate],
             model=model,
+            text=text or "",
             usage_metadata=None,
             _fluiq_cached=True,
             _fluiq_payload=payload,
@@ -214,12 +215,40 @@ def _build_embedding_mock(payload: dict, provider: str, model: str) -> Any:
             ]
         else:
             return None
-
         return SimpleNamespace(
             data=data_ns,
             model=model,
             object="list",
             usage=None,
+            _fluiq_cached=True,
+            _fluiq_payload=payload,
+        )
+
+    if provider == "gemini":
+        if isinstance(embedding_response, dict):
+            embeddings_ns = [
+                SimpleNamespace(values=item.get("values", []))
+                for item in embedding_response.get("data", [])
+            ]
+        else:
+            return None
+        return SimpleNamespace(
+            embeddings=embeddings_ns,
+            _fluiq_cached=True,
+            _fluiq_payload=payload,
+        )
+
+    if provider == "voyage":
+        # Voyage returns result.embeddings as list[list[float]] directly
+        if isinstance(embedding_response, dict):
+            embeddings_list = [
+                item.get("values", [])
+                for item in embedding_response.get("data", [])
+            ]
+        else:
+            return None
+        return SimpleNamespace(
+            embeddings=embeddings_list,
             _fluiq_cached=True,
             _fluiq_payload=payload,
         )

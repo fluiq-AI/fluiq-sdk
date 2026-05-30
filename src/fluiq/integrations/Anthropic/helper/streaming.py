@@ -109,6 +109,8 @@ class _MessageStreamAccumulator:
         prompt = usage.get("input_tokens") if isinstance(usage, dict) else None
         completion = usage.get("output_tokens") if isinstance(usage, dict) else None
         total = (prompt or 0) + (completion or 0) if (prompt or completion) else None
+        cache_read = usage.get("cache_read_input_tokens") if isinstance(usage, dict) else None
+        cache_creation = usage.get("cache_creation_input_tokens") if isinstance(usage, dict) else None
         return {
             "response": content or None,
             "text": "".join(text_parts) or None,
@@ -117,4 +119,6 @@ class _MessageStreamAccumulator:
             "stop_reason": self.stop_reason,
             "model": self.model,
             "tokens": {"prompt": prompt, "completion": completion, "total": total} if (prompt or completion) else None,
+            "prompt_cache_read_tokens": cache_read,
+            "prompt_cache_creation_tokens": cache_creation,
         }

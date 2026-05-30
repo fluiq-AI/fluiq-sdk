@@ -38,6 +38,8 @@ def init():
     _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_async")
     _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_count_tokens")
     _safe("fluiq.integrations.Gemini.trace", "patch_vertexai_count_tokens_async")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_embeddings")
+    _safe("fluiq.integrations.Gemini.trace", "patch_genai_embeddings_async")
 
     _safe("fluiq.integrations.Langchain.trace", "patch_langchain")
 
@@ -57,4 +59,9 @@ def init():
     _safe("fluiq.integrations.Vectorstores.Weaviate.trace", "patch_weaviate_async")
     _safe("fluiq.integrations.Vectorstores.FAISS.trace", "patch_faiss")
 
+    _safe("fluiq.integrations.Voyage.trace", "patch_voyage_embeddings")
+    _safe("fluiq.integrations.Voyage.trace", "patch_voyage_embeddings_async")
+
     _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_initialize")
+    _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_list_tools")
+    _safe("fluiq.integrations.shared.mcp_patch", "patch_mcp_call_tool")
