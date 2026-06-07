@@ -23,6 +23,17 @@ _config={
     "eval_judge_model": "claude-haiku-4-5-20251001",
 }
 
+def auth_headers() -> dict:
+    """Return the Authorization header carrying the configured API key.
+
+    The API key is transmitted as an HTTP ``Authorization: Bearer`` token on
+    every SDK → fluiq-api request. Returns an empty dict when no key is
+    configured so callers can spread it unconditionally.
+    """
+    key = _config.get("api_key")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def init(api_key: str = API_KEY, version: str = VERSION, endpoint: str = ENDPOINT):
     _config["api_key"]  = api_key
     _config["version"]  = version

@@ -36,7 +36,7 @@ class ApiCache(BaseCache):
         self._local: dict[str, Any] = {}
 
     def _headers(self) -> dict[str, str]:
-        return {"x-api-key": self._api_key}
+        return {"Authorization": f"Bearer {self._api_key}"}
 
     def get(self, key: str) -> Optional[Any]:
         if key in self._local:

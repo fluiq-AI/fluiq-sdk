@@ -80,7 +80,8 @@ def _fetch_profile() -> None:
     url = f"{cfg['endpoint']}/{cfg['version']}/optimize/profile"
 
     import requests
-    resp = requests.get(url, headers={"x-api-key": cfg["api_key"]}, timeout=5.0)
+    from fluiq.config import auth_headers
+    resp = requests.get(url, headers=auth_headers(), timeout=5.0)
     if resp.status_code == 200:
         profile = resp.json()
         s = _state()

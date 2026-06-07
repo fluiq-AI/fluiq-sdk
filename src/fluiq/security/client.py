@@ -13,7 +13,7 @@ import logging
 
 import requests
 
-from fluiq.config import _config
+from fluiq.config import _config, auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,6 @@ def pre_call_check(prompt_text: str, context: dict | None = None, guardrail: str
         from fluiq.integrations.shared.context import current_llm_trace_id
         trace_id = current_llm_trace_id()
         body: dict = {
-            "api_key":   _config["api_key"],
             "prompt":    prompt_text,
             "trace_id":  trace_id,
             "guardrail": guardrail,
@@ -47,6 +46,7 @@ def pre_call_check(prompt_text: str, context: dict | None = None, guardrail: str
         r = requests.post(
             f"{_base_url()}/secure/check",
             json=body,
+            headers=auth_headers(),
             timeout=2,
         )
 

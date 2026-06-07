@@ -1,5 +1,5 @@
 import requests
-from fluiq.config import _config
+from fluiq.config import _config, auth_headers
 
 def send_event(data):
 
@@ -10,9 +10,9 @@ def send_event(data):
         r = requests.post(
             f"{_config['endpoint']}/{_config['version']}/ingest",
             json={
-                "api_key": _config["api_key"],
                 "event":data
             },
+            headers=auth_headers(),
             timeout=5
         )
         r.raise_for_status()
@@ -33,9 +33,9 @@ def send_event_gated(data) -> dict:
         r = requests.post(
             f"{_config['endpoint']}/{_config['version']}/ingest",
             json={
-                "api_key": _config["api_key"],
                 "event": data,
             },
+            headers=auth_headers(),
             timeout=5,
         )
         r.raise_for_status()

@@ -14,7 +14,7 @@ from typing import Any
 
 import requests
 
-from fluiq.config import _config
+from fluiq.config import _config, auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ def call_evaluate_block(trace: dict[str, Any]) -> dict[str, float] | None:
         base = f"{_config['endpoint']}/{_config['version']}"
         r = requests.post(
             f"{base}/evaluate",
+            headers=auth_headers(),
             json={
-                "api_key":     _config["api_key"],
                 "trace_id":    trace.get("trace_id"),
                 "model":       trace.get("model") or "",
                 "prompt":      _extract_question(trace),

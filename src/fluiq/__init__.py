@@ -159,11 +159,12 @@ def fetch_prompt(slug: str, env: str = "production") -> Prompt:
         401 if the API key is invalid.
     """
     import requests
-    from fluiq.config import _config
+    from fluiq.config import _config, auth_headers
 
     r = requests.get(
         f"{_config['endpoint']}/{_config['version']}/prompts/fetch/{slug}",
-        params={"api_key": _config["api_key"], "env": env},
+        params={"env": env},
+        headers=auth_headers(),
         timeout=10,
     )
     r.raise_for_status()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluiq"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fluiq SDK"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -15,6 +15,7 @@ dependencies = [
     "requests>=2.31",
     "pydantic>=2.0",
     "redis>=4.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
