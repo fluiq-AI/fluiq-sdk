@@ -1,4 +1,7 @@
 # Fluiq Python SDK
+[![PyPI version](https://badge.fury.io/py/fluiq.svg)](https://pypi.org/project/fluiq/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
 
 Instrument any LLM application in two lines. Auto-tracing for OpenAI, Anthropic, Gemini, LangChain, LangGraph, CrewAI, Google ADK, and all major vector stores — plus a `@trace` decorator for everything else. Every run is cost-tracked in your dashboard. Add one more line to enable security scanning, evaluation, or Redis caching.
 
