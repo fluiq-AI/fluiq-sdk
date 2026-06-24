@@ -66,6 +66,7 @@ def log_trace(data):
                         "metrics": _config.get("eval_metrics") or ["hallucination", "relevance"],
                         "judge_model": _config.get("eval_judge_model", "claude-haiku-4-5-20251001"),
                         "thresholds": _config.get("eval_thresholds", {}),
+                        "custom_judges": _config.get("eval_custom_judges", {}),
                     }
 
         # Response gate: when secure mode='block', read /ingest's return value so
@@ -102,7 +103,10 @@ def log_trace(data):
                     from fluiq.exceptions import FluiqEvalError
                     scores = call_evaluate_block(data)
                     if scores:
-                        thresholds = _config.get("eval_thresholds", {})
+                        thresholds = {
+                            **_config.get("eval_thresholds", {}),
+                            **_config.get("eval_custom_judges", {}),
+                        }
                         failures = {m: s for m, s in scores.items() if s < thresholds.get(m, 0.0)}
                         if failures:
                             raise FluiqEvalError(failures, scores)

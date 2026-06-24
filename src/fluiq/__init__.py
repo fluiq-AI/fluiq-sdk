@@ -57,6 +57,7 @@ def eval(
     metrics: list[str] | None = None,
     mode: str = "warn",
     judge_model: str = "claude-haiku-4-5-20251001",
+    custom_judges: dict | None = None,
 ) -> None:
     """Activate server-side LLM response evaluation.
 
@@ -87,15 +88,26 @@ def eval(
         from reaching your application.
     judge_model : str
         The model Fluiq uses as judge. Defaults to ``"claude-haiku-4-5-20251001"``.
+    custom_judges : dict, optional
+        Your own LLM-as-judge prompts, mapping a saved judge prompt's slug to
+        its pass/fail threshold, e.g. ``{"refund-policy": 0.8}``.
+
+        Create a judge prompt in the dashboard (Prompts → Save as *Judge*).
+        Its template uses ``$question``, ``$answer`` and ``$context``
+        placeholders and should ask the model to return a JSON object with a
+        numeric ``score`` (0–1) and a ``reason``. Each judge is scored on every
+        LLM response just like a built-in metric, and (in ``block`` mode) raises
+        ``FluiqEvalError`` when the score falls below its threshold.
     """
     if mode not in ("warn", "block"):
         raise ValueError(f"fluiq.eval() mode must be 'warn' or 'block', got {mode!r}")
     from fluiq.config import _config
-    _config["eval"]             = True
-    _config["eval_mode"]        = mode
-    _config["eval_thresholds"]  = dict(thresholds) if thresholds else {}
-    _config["eval_metrics"]     = list(metrics) if metrics else ["hallucination", "relevance"]
-    _config["eval_judge_model"] = judge_model
+    _config["eval"]              = True
+    _config["eval_mode"]         = mode
+    _config["eval_thresholds"]   = dict(thresholds) if thresholds else {}
+    _config["eval_metrics"]      = list(metrics) if metrics else ["hallucination", "relevance"]
+    _config["eval_judge_model"]  = judge_model
+    _config["eval_custom_judges"] = {str(k): float(v) for k, v in (custom_judges or {}).items()}
 
 
 def secure(mode: str = "warn", *, guardrail: str = "default") -> None:

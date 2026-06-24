@@ -42,23 +42,25 @@ def _extract_question(trace: dict[str, Any]) -> str:
 def call_evaluate_block(trace: dict[str, Any]) -> dict[str, float] | None:
     """POST trace to /evaluate and return {metric: score} or None (block mode only)."""
     try:
-        metrics     = _config.get("eval_metrics") or ["hallucination", "relevance"]
-        judge_model = _config.get("eval_judge_model", "claude-haiku-4-5-20251001")
-        thresholds  = _config.get("eval_thresholds", {})
+        metrics       = _config.get("eval_metrics") or ["hallucination", "relevance"]
+        judge_model   = _config.get("eval_judge_model", "claude-haiku-4-5-20251001")
+        thresholds    = _config.get("eval_thresholds", {})
+        custom_judges = _config.get("eval_custom_judges", {})
 
         base = f"{_config['endpoint']}/{_config['version']}"
         r = requests.post(
             f"{base}/evaluate",
             headers=auth_headers(),
             json={
-                "trace_id":    trace.get("trace_id"),
-                "model":       trace.get("model") or "",
-                "prompt":      _extract_question(trace),
-                "response":    trace.get("response") or trace.get("output") or "",
-                "context":     "",
-                "metrics":     list(metrics),
-                "judge_model": judge_model,
-                "thresholds":  dict(thresholds),
+                "trace_id":      trace.get("trace_id"),
+                "model":         trace.get("model") or "",
+                "prompt":        _extract_question(trace),
+                "response":      trace.get("response") or trace.get("output") or "",
+                "context":       "",
+                "metrics":       list(metrics),
+                "judge_model":   judge_model,
+                "thresholds":    dict(thresholds),
+                "custom_judges": dict(custom_judges),
             },
             timeout=30,
         )

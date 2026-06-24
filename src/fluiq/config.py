@@ -21,6 +21,7 @@ _config={
     "eval_metrics": None,        # None → SDK default; or explicit list
     "eval_thresholds": {},       # {"hallucination": 0.8, ...}
     "eval_judge_model": "claude-haiku-4-5-20251001",
+    "eval_custom_judges": {},    # {judge_prompt_slug: threshold}
 }
 
 def auth_headers() -> dict:
