@@ -20,6 +20,12 @@ from fluiq.integrations.Langchain.helper.utils import (
     _extract_finish_reason,
     _extract_tool_calls,
 )
+from fluiq.integrations.Langchain.helper.langgraph_edges import (
+    current_graph_name,
+    predecessor_names,
+    resolve_join_parents,
+    resolve_join_parents_by_edges,
+)
 
 
 _LANGGRAPH_META_KEYS = (
@@ -47,9 +53,59 @@ class FluiqCallbackHandler(BaseCallbackHandler):
     def __init__(self):
         super().__init__()
         self._runs = {}
+        # Per-graph-run registry of {node_name: run_id}, used to turn a join
+        # node's langgraph_triggers back into predecessor run_ids (parent_ids).
+        self._lg_nodes = {}
 
     def _start(self, run_id, **state):
         self._runs[run_id] = {"start": time.time(), **state}
+
+    # ── LangGraph DAG (fan-in / join) tracking ────────────────────────────────
+    def _lg_thread_key(self, metadata, parent_run_id):
+        """Scope the node registry to a single graph invocation. thread_id is
+        stable per run; else the shared container run_id groups sibling nodes."""
+        if isinstance(metadata, dict) and metadata.get("thread_id"):
+            return f"t:{metadata['thread_id']}"
+        return f"p:{parent_run_id}" if parent_run_id else "p:root"
+
+    def _register_lg_node(self, tkey, node_name, run_id):
+        if not tkey or not node_name:
+            return
+        reg = self._lg_nodes.get(tkey)
+        if reg is None:
+            if len(self._lg_nodes) > 256:  # bound memory; fail-open
+                self._lg_nodes.clear()
+            reg = {}
+            self._lg_nodes[tkey] = reg
+        reg[node_name] = str(run_id)
+
+    def _lg_join_parents(self, metadata, run_id, parent_run_id):
+        """Resolve multi-parent ids for a LangGraph join node (or None)."""
+        lg = _langgraph_meta(metadata)
+        node_name = lg.get("langgraph_node") if lg else None
+        if not node_name:
+            return None
+        tkey = self._lg_thread_key(metadata, parent_run_id)
+        registry = self._lg_nodes.get(tkey) or {}
+        # Prefer the static edge graph captured at compile (reliable regardless
+        # of LangGraph's trigger encoding); fall back to trigger-name matching
+        # for other frameworks / versions that name source nodes in triggers.
+        # Resolve against predecessors already registered, then record self.
+        parent_ids = resolve_join_parents_by_edges(registry, node_name)
+        if parent_ids is None:
+            parent_ids = resolve_join_parents(
+                registry, node_name, lg.get("langgraph_triggers"),
+            )
+        self._register_lg_node(tkey, node_name, run_id)
+        return parent_ids
+
+    def _lg_predecessors(self, metadata):
+        """Static predecessor node names for this LangGraph node (or None)."""
+        lg = _langgraph_meta(metadata)
+        node_name = lg.get("langgraph_node") if lg else None
+        if not node_name:
+            return None
+        return predecessor_names(node_name) or None
 
     def _end(self, run_id):
         state = self._runs.pop(run_id, None) or {}
@@ -66,6 +122,12 @@ class FluiqCallbackHandler(BaseCallbackHandler):
         lg = _langgraph_meta(meta)
         kwargs.setdefault("integration", _integration_for(meta))
         if lg is not None:
+            # Stamp the node's static predecessors (node names) so the dashboard
+            # can draw the real DAG, including the fan-out edges that parent_ids
+            # (fan-in only) can't express.
+            preds = state.get("lg_predecessors")
+            if preds:
+                lg = {**lg, "predecessors": list(preds)}
             kwargs.setdefault("langgraph", lg)
         self._emit(**kwargs)
 
@@ -189,9 +251,16 @@ class FluiqCallbackHandler(BaseCallbackHandler):
     def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None,
                        tags=None, metadata=None, **kwargs):
         name = _component_name(serialized)
+        # LangGraph's top-level graph run arrives with no serialized name — give
+        # the parent-less container the graph's name so it has an agent identity
+        # (else it's invisible in the Agents view). Only the outermost chain.
+        if not name and parent_run_id is None:
+            name = current_graph_name()
         self._start(
             run_id,
             parent_id=self._parent(parent_run_id),
+            parent_ids=self._lg_join_parents(metadata, run_id, parent_run_id),
+            lg_predecessors=self._lg_predecessors(metadata),
             name=name,
             inputs=inputs,
             metadata=metadata,
@@ -216,6 +285,7 @@ class FluiqCallbackHandler(BaseCallbackHandler):
             latency=end - state.get("start", end),
             trace_id=str(run_id),
             parent_id=state.get("parent_id") or self._parent(parent_run_id),
+            parent_ids=state.get("parent_ids"),
             success=True,
         )
 
@@ -231,6 +301,7 @@ class FluiqCallbackHandler(BaseCallbackHandler):
             latency=end - state.get("start", end),
             trace_id=str(run_id),
             parent_id=state.get("parent_id") or self._parent(parent_run_id),
+            parent_ids=state.get("parent_ids"),
             success=False,
         )
 

@@ -7,16 +7,18 @@ from fluiq.integrations.shared.context import (
     current_parent_id,
     push_trace_id,
     pop_trace_id,
+    take_declared_parents,
     _inner_cache_hit,
 )
 from fluiq.integrations.shared.safety import _fail_open
 
 
 @_fail_open
-def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
+def _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=None):
     payload = LogTrace(
         trace_id=trace_id,
         parent_id=parent_id,
+        parent_ids=parent_ids,
         integration=TraceType.General_Function,
         function=func_name,
         type="function",
@@ -28,11 +30,12 @@ def _emit_start(trace_id, parent_id, func_name, args, kwargs, start):
 
 
 @_fail_open
-def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, *, cache_hit=False):
+def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, *, cache_hit=False, parent_ids=None):
     success = exc is None
     payload = LogTrace(
         trace_id=trace_id,
         parent_id=parent_id,
+        parent_ids=parent_ids,
         integration=TraceType.General_Function,
         function=func_name,
         type="function",
@@ -55,6 +58,7 @@ def _build_wrapper(func, func_name: str):
             from fluiq.config import _config
             trace_id = str(uuid.uuid4())
             parent_id = current_parent_id()
+            declared = take_declared_parents()
             token = push_trace_id(trace_id)
             start = time.time()
             _optimize = _config.get("optimize")
@@ -69,11 +73,11 @@ def _build_wrapper(func, func_name: str):
             if _cached_payload is not None:
                 cached_result = _cached_payload.get("result")
                 end = time.time()
-                _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+                _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
                 pop_trace_id(token)
-                _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True)
+                _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True, parent_ids=declared)
                 return cached_result
-            _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+            _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
             exc = None
             result = None
             _hit_token = _inner_cache_hit.set(False)
@@ -91,7 +95,7 @@ def _build_wrapper(func, func_name: str):
                 except Exception:
                     pass
             pop_trace_id(token)
-            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit)
+            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit, parent_ids=declared)
             if exc is not None:
                 raise exc
             return result
@@ -103,6 +107,7 @@ def _build_wrapper(func, func_name: str):
         from fluiq.config import _config
         trace_id = str(uuid.uuid4())
         parent_id = current_parent_id()
+        declared = take_declared_parents()
         token = push_trace_id(trace_id)
         start = time.time()
         _optimize = _config.get("optimize")
@@ -117,11 +122,11 @@ def _build_wrapper(func, func_name: str):
         if _cached_payload is not None:
             cached_result = _cached_payload.get("result")
             end = time.time()
-            _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+            _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
             pop_trace_id(token)
-            _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True)
+            _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True, parent_ids=declared)
             return cached_result
-        _emit_start(trace_id, parent_id, func_name, args, kwargs, start)
+        _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
         exc = None
         result = None
         _hit_token = _inner_cache_hit.set(False)
@@ -139,7 +144,7 @@ def _build_wrapper(func, func_name: str):
             except Exception:
                 pass
         pop_trace_id(token)
-        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit)
+        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit, parent_ids=declared)
         if exc is not None:
             raise exc
         return result

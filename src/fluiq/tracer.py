@@ -16,12 +16,17 @@ def log_trace(data):
             data['trace_id'] = ctx_trace_id or str(uuid.uuid4())
 
         if not data.get('parent_id'):
+            # Never self-parent: a wrapper that pushes its own trace_id before
+            # emitting its completion (e.g. CrewAI's crew span) would otherwise
+            # inherit parent_id == its own trace_id, which the read side treats
+            # as a broken/hidden root (is_root=0, "Architecture unavailable").
+            _tid = data.get('trace_id')
             ctx_parent = current_parent_id()
-            if ctx_parent:
+            if ctx_parent and ctx_parent != _tid:
                 data['parent_id'] = ctx_parent
             else:
                 chain_id = compute_chain_id(data)
-                if chain_id is not None:
+                if chain_id is not None and chain_id != _tid:
                     data['parent_id'] = chain_id
 
         # Remove legacy local-scan flag if present (no-op, kept for compat)
@@ -56,6 +61,12 @@ def log_trace(data):
         # eval worker. Block mode: /ingest gets no config; we call /evaluate
         # synchronously below after the trace is stored.
         if _config.get("eval", False) and not is_cache_hit:
+            # Mark that fluiq.eval() is active. The backend only evaluates when
+            # this signal is present — instrument() alone never auto-evaluates.
+            # LLM calls additionally carry _eval_config (metrics/thresholds);
+            # retrieval calls rely on this flag alone (worker uses context
+            # precision), so both paths stay opt-in behind fluiq.eval().
+            data["_eval"] = True
             _resp = data.get("response")
             _resp_str = _resp if isinstance(_resp, str) else (
                 " ".join(str(x) for x in _resp) if isinstance(_resp, list) else ""

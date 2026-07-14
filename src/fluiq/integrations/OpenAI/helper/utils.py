@@ -1,4 +1,5 @@
 from fluiq.integrations.shared.safety import _fail_open
+from fluiq.integrations.shared.media import media_reference
 
 MEDIA_PART_TYPES = {
     "image_url", "image", "input_image", "output_image",
@@ -27,6 +28,11 @@ def _to_jsonable(obj):
 
 @_fail_open
 def _strip_media(content):
+    """Replace media parts with a payload-free reference; keep text parts as-is.
+
+    The raw image/audio/video bytes are never stored, but a compact
+    ``_media_ref`` (kind / mime / size / sha256 / url) is kept so the trace still
+    records that the call was multimodal."""
     if content is None:
         return None
     if isinstance(content, list):
@@ -34,7 +40,8 @@ def _strip_media(content):
         for part in content:
             ptype = part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
             if ptype in MEDIA_PART_TYPES:
-                continue
-            kept.append(_to_jsonable(part))
+                kept.append(media_reference(part))
+            else:
+                kept.append(_to_jsonable(part))
         return kept or None
     return content

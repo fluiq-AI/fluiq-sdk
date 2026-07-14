@@ -11,6 +11,10 @@ from fluiq.integrations.shared.context import (
     pop_trace_id,
     format_error_traceback,
 )
+from fluiq.integrations.GoogleADK.helper.adk_edges import (
+    resolve_adk_join_parents,
+    resolve_adk_predecessors,
+)
 from fluiq.integrations.GoogleADK.helper.utils import (
     _to_jsonable,
     _content_to_text,
@@ -29,6 +33,11 @@ class FluiqADKPlugin(BasePlugin):
         super().__init__(name="fluiq")
         self._agents = {}
         self._tools = {}
+        # Per-invocation {output_key: trace_id}: an agent that writes
+        # state[output_key] is recorded here so a downstream agent whose
+        # instruction reads several {output_key}s can be linked to them as a
+        # DAG join (parent_ids). Cleared per invocation in after_run_callback.
+        self._state_writers = {}
 
     def _emit(self, **fields):
         try:
@@ -63,9 +72,18 @@ class FluiqADKPlugin(BasePlugin):
         agent_name = getattr(agent, "name", None)
         model = _agent_model(agent)
         user_input = _user_message(callback_context)
+        # DAG join: this agent's instruction reads >=2 upstream agents' outputs.
+        writers = self._state_writers.get(invocation_id) or {}
+        instruction = getattr(agent, "instruction", None)
+        parent_ids = resolve_adk_join_parents(writers, instruction)
+        # ALL upstream outputs it reads (>=1), including single-upstream fan-out
+        # edges — for the dashboard to draw the full DAG.
+        predecessors = resolve_adk_predecessors(writers, instruction)
         self._agents[self._agent_key(agent, callback_context)] = {
             "trace_id": trace_id,
             "parent_id": parent_id,
+            "parent_ids": parent_ids,
+            "predecessors": predecessors,
             "start": time.time(),
             "agent_name": agent_name,
             "model": model,
@@ -82,6 +100,8 @@ class FluiqADKPlugin(BasePlugin):
             input=user_input,
             trace_id=trace_id,
             parent_id=parent_id,
+            parent_ids=parent_ids,
+            predecessors=predecessors,
             invocation_id=invocation_id,
         )
         return None
@@ -112,9 +132,19 @@ class FluiqADKPlugin(BasePlugin):
             latency=end - state.get("start", end),
             trace_id=state.get("trace_id"),
             parent_id=state.get("parent_id"),
+            parent_ids=state.get("parent_ids"),
+            predecessors=state.get("predecessors"),
             invocation_id=state.get("invocation_id"),
             success=True,
         )
+        # Record this agent's output so downstream joins can link to it.
+        output_key = getattr(agent, "output_key", None)
+        if output_key:
+            if len(self._state_writers) > 256:  # bound memory if a run leaks
+                self._state_writers.clear()
+            self._state_writers.setdefault(
+                state.get("invocation_id"), {}
+            )[output_key] = state.get("trace_id")
         return None
 
     async def after_model_callback(self, *, callback_context, llm_response):
@@ -230,6 +260,8 @@ class FluiqADKPlugin(BasePlugin):
         if invocation_id is None:
             return None
         end = time.time()
+        # Release the per-invocation state-writer registry (join resolution).
+        self._state_writers.pop(str(invocation_id), None)
         stale = [
             (key, st) for key, st in list(self._agents.items())
             if st.get("invocation_id") == str(invocation_id)

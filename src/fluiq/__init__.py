@@ -2,6 +2,7 @@ from fluiq.config import init as _init, ENDPOINT, API_KEY, VERSION
 from fluiq.decorator import trace
 from fluiq.exceptions import FluiqSecurityError, FluiqEvalError
 from fluiq.prompts import Prompt
+from fluiq.integrations.shared.context import declare_parents as join_parents
 
 def instrument(
     api_key:  str = API_KEY,

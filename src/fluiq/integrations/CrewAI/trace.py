@@ -1,3 +1,4 @@
+import threading
 import time
 import uuid
 
@@ -8,6 +9,10 @@ from fluiq.integrations.shared.context import (
     pop_trace_id,
     current_parent_id,
     format_error_traceback,
+)
+from fluiq.integrations.CrewAI.helper.crew_edges import (
+    resolve_task_parents,
+    resolve_task_predecessors,
 )
 from fluiq.integrations.CrewAI.helper.utils import (
     _to_jsonable,
@@ -22,13 +27,50 @@ from fluiq.integrations.CrewAI.helper.utils import (
 
 _patched = False
 
+# Registry of {id(task): trace_id} for tasks executed in the current process,
+# used to resolve a join task's ``context`` dependencies into predecessor
+# run_ids (parent_ids). Bounded + lock-guarded; best-effort (fail-open).
+_task_runs = {}
+_task_runs_lock = threading.Lock()
+
+
+def _register_task(task, trace_id):
+    try:
+        with _task_runs_lock:
+            if len(_task_runs) > 512:
+                _task_runs.clear()
+            _task_runs[id(task)] = trace_id
+    except Exception:
+        pass
+
+
+def _task_join_parents(task, trace_id):
+    """Resolve parent_ids for a task from its ``context`` dependency tasks."""
+    try:
+        with _task_runs_lock:
+            snapshot = dict(_task_runs)
+        return resolve_task_parents(snapshot, getattr(task, "context", None), trace_id)
+    except Exception:
+        return None
+
+
+def _task_predecessors(task, trace_id):
+    """ALL context-dependency run_ids for a task (DAG edges), or None."""
+    try:
+        with _task_runs_lock:
+            snapshot = dict(_task_runs)
+        return resolve_task_predecessors(snapshot, getattr(task, "context", None), trace_id)
+    except Exception:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Internal emit helpers
 # ---------------------------------------------------------------------------
 
 def _emit(*, type_, trace_id, parent_id, function, input_=None, output=None,
-          latency=None, success, tokens=None, error=None, status=None):
+          latency=None, success, tokens=None, error=None, status=None, parent_ids=None,
+          predecessors=None):
     try:
         kwargs = dict(
             integration=TraceType.CrewAI,
@@ -42,6 +84,10 @@ def _emit(*, type_, trace_id, parent_id, function, input_=None, output=None,
             success=success,
             tokens=tokens,
         )
+        if parent_ids:
+            kwargs["parent_ids"] = parent_ids
+        if predecessors:
+            kwargs["predecessors"] = predecessors
         if status is not None:
             kwargs["status"] = status
         if error is not None:
@@ -51,10 +97,11 @@ def _emit(*, type_, trace_id, parent_id, function, input_=None, output=None,
         pass
 
 
-def _emit_start(*, type_, trace_id, parent_id, function, input_=None):
+def _emit_start(*, type_, trace_id, parent_id, function, input_=None, parent_ids=None,
+                predecessors=None):
     """Lightweight running signal so the frontend can show in-progress rows."""
     try:
-        log_trace(LogTrace(
+        kwargs = dict(
             integration=TraceType.CrewAI,
             type=type_,
             trace_id=trace_id,
@@ -63,7 +110,12 @@ def _emit_start(*, type_, trace_id, parent_id, function, input_=None):
             input=input_,
             status="running",
             started_at=time.time(),
-        ).model_dump(mode="json"))
+        )
+        if parent_ids:
+            kwargs["parent_ids"] = parent_ids
+        if predecessors:
+            kwargs["predecessors"] = predecessors
+        log_trace(LogTrace(**kwargs).model_dump(mode="json"))
     except Exception:
         pass
 
@@ -173,10 +225,15 @@ def _patch_task(Task):
             trace_id = str(uuid.uuid4())
             parent_id = current_parent_id()
             desc = _task_description(self)
+            # A task with >=2 dependency tasks (self.context) is a join/fan-in.
+            parent_ids = _task_join_parents(self, trace_id)
+            predecessors = _task_predecessors(self, trace_id)
+            _register_task(self, trace_id)
             start = time.time()
 
             _emit_start(type_="task", trace_id=trace_id, parent_id=parent_id,
-                        function=desc, input_=context)
+                        function=desc, input_=context, parent_ids=parent_ids,
+                        predecessors=predecessors)
 
             ctx_tok = push_trace_id(trace_id)
             try:
@@ -190,6 +247,8 @@ def _patch_task(Task):
                     output=_extract_task_output(result),
                     latency=time.time() - start,
                     success=True,
+                    parent_ids=parent_ids,
+                    predecessors=predecessors,
                 )
                 return result
             except Exception as e:
@@ -202,6 +261,8 @@ def _patch_task(Task):
                     latency=time.time() - start,
                     success=False,
                     error=e,
+                    parent_ids=parent_ids,
+                    predecessors=predecessors,
                 )
                 return None
             finally:
@@ -214,10 +275,14 @@ def _patch_task(Task):
             trace_id = str(uuid.uuid4())
             parent_id = current_parent_id()
             desc = _task_description(self)
+            parent_ids = _task_join_parents(self, trace_id)
+            predecessors = _task_predecessors(self, trace_id)
+            _register_task(self, trace_id)
             start = time.time()
 
             _emit_start(type_="task", trace_id=trace_id, parent_id=parent_id,
-                        function=desc, input_=context)
+                        function=desc, input_=context, parent_ids=parent_ids,
+                        predecessors=predecessors)
 
             ctx_tok = push_trace_id(trace_id)
             try:
@@ -231,6 +296,8 @@ def _patch_task(Task):
                     output=_extract_task_output(result),
                     latency=time.time() - start,
                     success=True,
+                    parent_ids=parent_ids,
+                    predecessors=predecessors,
                 )
                 return result
             except Exception as e:
@@ -243,6 +310,8 @@ def _patch_task(Task):
                     latency=time.time() - start,
                     success=False,
                     error=e,
+                    parent_ids=parent_ids,
+                    predecessors=predecessors,
                 )
                 return None
             finally:

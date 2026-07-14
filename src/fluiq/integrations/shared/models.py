@@ -63,6 +63,15 @@ class LogTrace(BaseModel):
 
     trace_id: Optional[str] = None
     parent_id: Optional[str] = None
+    # Multiple parents for a DAG join / fan-in node (e.g. a LangGraph node
+    # triggered by several upstream nodes). When set, the evaluator uses these
+    # as the step's parents instead of the single ``parent_id``.
+    parent_ids: Optional[List[Any]] = None
+    # ALL declared predecessor run_ids (>= 1), including single-dependency
+    # fan-out edges that parent_ids (fan-in joins only) omits. Purely for the
+    # dashboard to draw the full DAG (CrewAI/GoogleADK); the evaluator uses
+    # parent_ids. (LangGraph stamps node-name predecessors under `langgraph`.)
+    predecessors: Optional[List[Any]] = None
     function: Optional[str] = None
     output: Optional[Any] = None
     success: Optional[bool] = None

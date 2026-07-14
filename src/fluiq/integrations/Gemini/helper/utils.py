@@ -18,6 +18,9 @@ def _to_jsonable(obj):
         return base64.b64encode(obj).decode("ascii")
     return obj
 
+from fluiq.integrations.shared.media import media_reference
+
+
 def _is_media_part(part):
     if isinstance(part,dict):
         return bool(part.get("inline_data") or part.get("file_data"))
@@ -27,6 +30,8 @@ def _is_media_part(part):
 
 
 def _strip_media(candidates):
+    """Replace media parts (inline_data / file_data) with a payload-free
+    reference; keep text parts as-is."""
     if not candidates:
         return None
     kept_candidates = []
@@ -37,11 +42,14 @@ def _strip_media(candidates):
         else:
             content = getattr(cand,"content",None)
             parts = getattr(content, "parts", None) if content else None
-        
+
         if not parts:
             continue
-        
-        kept_parts = [_to_jsonable(p) for p in parts if not _is_media_part(p)]
+
+        kept_parts = [
+            media_reference(p) if _is_media_part(p) else _to_jsonable(p)
+            for p in parts
+        ]
 
         if kept_parts:
             kept_candidates.append(kept_parts)
