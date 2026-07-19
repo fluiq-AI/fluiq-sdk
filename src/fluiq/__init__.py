@@ -111,6 +111,61 @@ def eval(
     _config["eval_custom_judges"] = {str(k): float(v) for k, v in (custom_judges or {}).items()}
 
 
+def feedback(
+    value,
+    trace_id: str | None = None,
+    name: str = "user_feedback",
+    comment: str | None = None,
+) -> None:
+    """Record end-user feedback (a thumbs verdict or 0–1 rating) for a trace.
+
+    Call it when your user reacts to an AI response — the score lands next to
+    the automated evaluation results for that trace in the dashboard.
+
+    Parameters
+    ----------
+    value : bool | float
+        ``True``/``False`` for thumbs up/down, or a 0–1 rating.
+    trace_id : str, optional
+        The trace to attach the feedback to. Defaults to the most recent LLM
+        call's trace in the current context (e.g. right after the call that
+        produced the response the user is rating).
+    name : str
+        Feedback channel name shown in the dashboard, e.g. ``"thumbs"`` or
+        ``"csat"``. Defaults to ``"user_feedback"``.
+    comment : str, optional
+        Free-text comment from the user.
+
+    Fire-and-forget: never raises; a network failure only logs locally.
+    """
+    from fluiq.config import _config, auth_headers
+    if not _config.get("enabled"):
+        return
+    if trace_id is None:
+        from fluiq.integrations.shared.context import (
+            current_llm_trace_id, current_parent_id,
+        )
+        trace_id = current_llm_trace_id() or current_parent_id()
+    if not trace_id:
+        print("[fluiq] feedback skipped: no trace_id (pass one explicitly)")
+        return
+    try:
+        import requests
+        requests.post(
+            f"{_config['endpoint']}/{_config['version']}/feedback",
+            json={
+                "trace_id": str(trace_id),
+                "name":     name,
+                "value":    value,
+                "comment":  comment,
+            },
+            headers=auth_headers(),
+            timeout=5,
+        ).raise_for_status()
+    except Exception as e:
+        print("[fluiq] feedback failed: ", repr(e))
+
+
 def secure(mode: str = "warn", *, guardrail: str = "default") -> None:
     """Activate server-side security scanning (requires Team plan or above).
 
