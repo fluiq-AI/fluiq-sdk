@@ -1,5 +1,4 @@
 import contextvars
-from types import SimpleNamespace
 
 # Set by our streamablehttp_client / http_client wrappers so that
 # _get_session_url can find the URL even when the session streams
@@ -114,12 +113,6 @@ def patch_mcp_initialize():
             # re-extracting from streams every call.
             if server_url:
                 self._fluiq_server_url = server_url
-                # Server (re-)initialize means the tool list may have changed.
-                try:
-                    from fluiq.optimization.client import invalidate_mcp_tools_cache
-                    invalidate_mcp_tools_cache(server_url)
-                except Exception:
-                    pass
         except Exception:
             pass
         return result
@@ -129,7 +122,7 @@ def patch_mcp_initialize():
 
 
 def patch_mcp_list_tools():
-    """Cache ClientSession.list_tools() responses in Redis, keyed by server URL."""
+    """Trace ClientSession.list_tools() calls."""
     try:
         from mcp import ClientSession
     except ImportError:
@@ -141,60 +134,17 @@ def patch_mcp_list_tools():
     original = ClientSession.list_tools
 
     async def wrapped(self, *args, **kwargs):
-        from fluiq.optimization.client import (
-            lookup_mcp_tools_cache,
-            populate_mcp_tools_cache,
-        )
         from fluiq.tracer import log_trace
 
         server_url = _get_session_url(self)
-
-        if server_url:
-            cached_tools = lookup_mcp_tools_cache(server_url)
-            if cached_tools is not None:
-                try:
-                    from mcp.types import ListToolsResult, Tool
-                    result = ListToolsResult(
-                        tools=[Tool.model_validate(t) for t in cached_tools]
-                    )
-                except Exception:
-                    result = SimpleNamespace(
-                        tools=[SimpleNamespace(**t) for t in cached_tools]
-                    )
-                try:
-                    log_trace({
-                        "type": "mcp",
-                        "kind": "mcp_list_tools",
-                        "server_url": server_url,
-                        "cache_hit": True,
-                    })
-                except Exception:
-                    pass
-                return result
-
         result = await original(self, *args, **kwargs)
 
         if server_url:
-            try:
-                tools = []
-                for t in (getattr(result, "tools", None) or []):
-                    if hasattr(t, "model_dump"):
-                        tools.append(t.model_dump(mode="json", exclude_none=True))
-                    else:
-                        tools.append({
-                            "name": getattr(t, "name", None),
-                            "description": getattr(t, "description", None),
-                            "inputSchema": _dump(getattr(t, "inputSchema", None)),
-                        })
-                populate_mcp_tools_cache(server_url, tools)
-            except Exception:
-                pass
             try:
                 log_trace({
                     "type": "mcp",
                     "kind": "mcp_list_tools",
                     "server_url": server_url,
-                    "cache_hit": False,
                 })
             except Exception:
                 pass
@@ -206,7 +156,7 @@ def patch_mcp_list_tools():
 
 
 def patch_mcp_call_tool():
-    """Cache ClientSession.call_tool() results in Redis, keyed by (server_url, tool_name, args)."""
+    """Trace ClientSession.call_tool() invocations."""
     try:
         from mcp import ClientSession
     except ImportError:
@@ -218,66 +168,18 @@ def patch_mcp_call_tool():
     original = ClientSession.call_tool
 
     async def wrapped(self, name, arguments=None, *args, **kwargs):
-        from fluiq.optimization.client import (
-            lookup_mcp_call_cache,
-            populate_mcp_call_cache,
-        )
         from fluiq.tracer import log_trace
 
         server_url = _get_session_url(self)
-        args_dict = arguments if isinstance(arguments, dict) else {}
-
-        if server_url:
-            cached = lookup_mcp_call_cache(server_url, name, args_dict)
-            if cached is not None:
-                cached_content = cached.get("content") or []
-                cached_is_error = cached.get("isError", False)
-                try:
-                    from mcp.types import CallToolResult
-                    result = CallToolResult.model_validate({
-                        "content": cached_content,
-                        "isError": cached_is_error,
-                    })
-                except Exception:
-                    result = SimpleNamespace(
-                        content=[SimpleNamespace(**c) for c in cached_content],
-                        isError=cached_is_error,
-                    )
-                try:
-                    log_trace({
-                        "type": "mcp",
-                        "kind": "mcp_call",
-                        "server_url": server_url,
-                        "tool_name": name,
-                        "cache_hit": True,
-                    })
-                except Exception:
-                    pass
-                return result
-
         result = await original(self, name, arguments, *args, **kwargs)
 
-        if server_url and not getattr(result, "isError", False):
-            try:
-                raw_content = getattr(result, "content", None) or []
-                serialized = []
-                for item in raw_content:
-                    if hasattr(item, "model_dump"):
-                        serialized.append(item.model_dump(mode="json", exclude_none=True))
-                    elif isinstance(item, dict):
-                        serialized.append(item)
-                    else:
-                        serialized.append({"type": "text", "text": str(item)})
-                populate_mcp_call_cache(server_url, name, args_dict, serialized, is_error=False)
-            except Exception:
-                pass
+        if server_url:
             try:
                 log_trace({
                     "type": "mcp",
                     "kind": "mcp_call",
                     "server_url": server_url,
                     "tool_name": name,
-                    "cache_hit": False,
                 })
             except Exception:
                 pass

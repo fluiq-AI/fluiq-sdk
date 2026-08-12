@@ -41,26 +41,10 @@ def log_trace(data):
                 "guardrail": _config.get("secure_guardrail", "default"),
             }
 
-        is_cache_hit = data.pop("_cache_hit", False)
-        if is_cache_hit:
-            data["cache_hit"] = True
-        elif _config.get("optimize") and data.get("type") in ("llm", "function") and data.get("latency") is not None:
-            # LLM completion trace that went through the optimize path but was a
-            # cache miss (real API call). Mark explicitly so the backend can
-            # compute an accurate hit rate for the Optimize dashboard.
-            data["cache_hit"] = False
-
-        if _config.get("optimize", False) and not is_cache_hit:
-            try:
-                from fluiq.optimization.client import populate_cache
-                populate_cache(data)
-            except Exception:
-                pass
-
         # Warn mode: embed eval config so /ingest strips it and fans out to the
         # eval worker. Block mode: /ingest gets no config; we call /evaluate
         # synchronously below after the trace is stored.
-        if _config.get("eval", False) and not is_cache_hit:
+        if _config.get("eval", False):
             # Mark that fluiq.eval() is active. The backend only evaluates when
             # this signal is present — instrument() alone never auto-evaluates.
             # LLM calls additionally carry _eval_config (metrics/thresholds);
@@ -103,7 +87,7 @@ def log_trace(data):
 
         # Block mode: thin synchronous call to /evaluate after trace is stored.
         # Raises FluiqEvalError if any metric falls below its threshold.
-        if _config.get("eval", False) and not is_cache_hit:
+        if _config.get("eval", False):
             _resp = data.get("response")
             _resp_str = _resp if isinstance(_resp, str) else (
                 " ".join(str(x) for x in _resp) if isinstance(_resp, list) else ""

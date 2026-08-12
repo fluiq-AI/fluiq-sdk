@@ -14,8 +14,6 @@ _config={
     "endpoint": ENDPOINT,
     "secure": False,
     "secure_mode": "warn",      # "warn" | "block"
-    "optimize": False,
-    "optimize_mode": "cache",    # "cache" | "observe"
     "eval": False,
     "eval_mode": "warn",         # "warn" | "block"
     "eval_metrics": None,        # None → SDK default; or explicit list

@@ -24,24 +24,8 @@ def patch_voyage_embeddings():
     original = voyageai.Client.embed
 
     def wrapped(self, texts, model, **kwargs):
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         cache_kwargs = {"model": model, "texts": texts}
         start = time.time()
-        cached = pre_call_optimize_embedding(cache_kwargs, "voyage")
-        if cached is not None:
-            log_trace({
-                "type":        "llm",
-                "integration": "voyage",
-                "api":         "embeddings",
-                "model":       model,
-                "input":       texts,
-                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency":     time.time() - start,
-                "parent_id":   current_parent_id(),
-                "_cache_hit":  True,
-                "tokens":      None,
-            })
-            return cached
         result = original(self, texts, model, **kwargs)
         end = time.time()
         serialized = _serialize_embeddings(result)
@@ -71,24 +55,8 @@ def patch_voyage_embeddings_async():
     original = voyageai.AsyncClient.embed
 
     async def wrapped(self, texts, model, **kwargs):
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         cache_kwargs = {"model": model, "texts": texts}
         start = time.time()
-        cached = pre_call_optimize_embedding(cache_kwargs, "voyage")
-        if cached is not None:
-            log_trace({
-                "type":        "llm",
-                "integration": "voyage",
-                "api":         "embeddings",
-                "model":       model,
-                "input":       texts,
-                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency":     time.time() - start,
-                "parent_id":   current_parent_id(),
-                "_cache_hit":  True,
-                "tokens":      None,
-            })
-            return cached
         result = await original(self, texts, model, **kwargs)
         end = time.time()
         serialized = _serialize_embeddings(result)

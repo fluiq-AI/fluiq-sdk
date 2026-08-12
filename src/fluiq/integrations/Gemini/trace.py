@@ -11,7 +11,6 @@ from fluiq.integrations.shared.context import (
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.shared.security_gate import pre_call_guard
-from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.Gemini.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.Gemini.helper.tool_trace import (
     _extract_function_calls,
@@ -130,37 +129,6 @@ def patch_genai():
             _mcp_servers_norm = _extract_mcp_servers(kwargs)
             _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
             try:
-                from fluiq.integrations.shared.tool_cache import learn_from_gemini_contents
-                learn_from_gemini_contents(kwargs.get("contents") or [])
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(_lookup_kw, "gemini")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                tools, tool_config = _extract_request_tools(kwargs)
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.Gemini.value,
-                    "api": "generate_content",
-                    "model": kwargs.get("model"),
-                    "contents": _to_jsonable(kwargs.get("contents")),
-                    "tools": tools,
-                    "tool_config": tool_config,
-                    "response": _payload.get("response"),
-                    "function_calls": _payload.get("function_calls"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
-
-            try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
                 _emit_genai_error(kwargs, e, start, time.time())
@@ -200,37 +168,6 @@ def patch_genai_async():
             _tools_norm, _tool_config_norm = _extract_request_tools(kwargs)
             _mcp_servers_norm = _extract_mcp_servers(kwargs)
             _lookup_kw = {**kwargs, "tools": _tools_norm, "tool_config": _tool_config_norm, "mcp_servers": _mcp_servers_norm}
-            try:
-                from fluiq.integrations.shared.tool_cache import learn_from_gemini_contents
-                learn_from_gemini_contents(kwargs.get("contents") or [])
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(_lookup_kw, "gemini")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                tools, tool_config = _extract_request_tools(kwargs)
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.Gemini.value,
-                    "api": "generate_content",
-                    "model": kwargs.get("model"),
-                    "contents": _to_jsonable(kwargs.get("contents")),
-                    "tools": tools,
-                    "tool_config": tool_config,
-                    "response": _payload.get("response"),
-                    "function_calls": _payload.get("function_calls"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
-
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -566,31 +503,6 @@ def patch_vertexai():
 
             if not kwargs.get("stream"):
                 kwargs_for_cache = {**kwargs, "contents": request_contents, "model": model}
-                cached = pre_call_optimize(kwargs_for_cache, "gemini")
-                if cached is not None:
-                    end = time.time()
-                    _payload = getattr(cached, "_fluiq_payload", {})
-                    tools, tool_config = _extract_request_tools(kwargs, instance=self)
-                    log_trace({
-                        "type": "llm",
-                        "integration": TraceType.Gemini.value,
-                        "api": "vertex.generate_content",
-                        "model": model,
-                        "contents": _to_jsonable(request_contents),
-                        "tools": tools,
-                        "tool_config": tool_config,
-                        "response": _payload.get("response"),
-                        "function_calls": _payload.get("function_calls"),
-                        "mcp_calls": _payload.get("mcp_calls"),
-                        "mcp_results": _payload.get("mcp_results"),
-                        "mcp_servers": _payload.get("mcp_servers"),
-                        "latency": end - start,
-                        "parent_id": current_parent_id(),
-                        "_cache_hit": True,
-                        "tokens": None,
-                    })
-                    return cached
-
             try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
@@ -636,31 +548,6 @@ def patch_vertexai_async():
 
             if not kwargs.get("stream"):
                 kwargs_for_cache = {**kwargs, "contents": request_contents, "model": model}
-                cached = pre_call_optimize(kwargs_for_cache, "gemini")
-                if cached is not None:
-                    end = time.time()
-                    _payload = getattr(cached, "_fluiq_payload", {})
-                    tools, tool_config = _extract_request_tools(kwargs, instance=self)
-                    log_trace({
-                        "type": "llm",
-                        "integration": TraceType.Gemini.value,
-                        "api": "vertex.generate_content",
-                        "model": model,
-                        "contents": _to_jsonable(request_contents),
-                        "tools": tools,
-                        "tool_config": tool_config,
-                        "response": _payload.get("response"),
-                        "function_calls": _payload.get("function_calls"),
-                        "mcp_calls": _payload.get("mcp_calls"),
-                        "mcp_results": _payload.get("mcp_results"),
-                        "mcp_servers": _payload.get("mcp_servers"),
-                        "latency": end - start,
-                        "parent_id": current_parent_id(),
-                        "_cache_hit": True,
-                        "tokens": None,
-                    })
-                    return cached
-
             try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
@@ -804,23 +691,7 @@ def patch_genai_embeddings():
     original = Models.embed_content
 
     def wrapped(self, *args, **kwargs):
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         start = time.time()
-        cached = pre_call_optimize_embedding(kwargs, "gemini")
-        if cached is not None:
-            log_trace({
-                "type":        "llm",
-                "integration": TraceType.Gemini.value,
-                "api":         "embeddings",
-                "model":       kwargs.get("model"),
-                "contents":    _to_jsonable(kwargs.get("contents")),
-                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency":     time.time() - start,
-                "parent_id":   current_parent_id(),
-                "_cache_hit":  True,
-                "tokens":      None,
-            })
-            return cached
         response = original(self, *args, **kwargs)
         end = time.time()
         embeddings = getattr(response, "embeddings", []) or []
@@ -853,23 +724,7 @@ def patch_genai_embeddings_async():
     original = AsyncModels.embed_content
 
     async def wrapped(self, *args, **kwargs):
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         start = time.time()
-        cached = pre_call_optimize_embedding(kwargs, "gemini")
-        if cached is not None:
-            log_trace({
-                "type":        "llm",
-                "integration": TraceType.Gemini.value,
-                "api":         "embeddings",
-                "model":       kwargs.get("model"),
-                "contents":    _to_jsonable(kwargs.get("contents")),
-                "response":    getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency":     time.time() - start,
-                "parent_id":   current_parent_id(),
-                "_cache_hit":  True,
-                "tokens":      None,
-            })
-            return cached
         response = await original(self, *args, **kwargs)
         end = time.time()
         embeddings = getattr(response, "embeddings", []) or []

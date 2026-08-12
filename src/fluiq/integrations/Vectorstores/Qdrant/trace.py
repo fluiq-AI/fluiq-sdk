@@ -1,7 +1,5 @@
 from typing import Any
 
-from types import SimpleNamespace
-
 from fluiq.integrations.shared.models import TraceType
 from fluiq.integrations.Vectorstores.shared.utils import (
     _build_match,
@@ -9,18 +7,9 @@ from fluiq.integrations.Vectorstores.shared.utils import (
     _safe_jsonable,
     _truncate_ids,
     _vector_dim,
-    make_async_cached_wrapper,
-    make_async_invalidating_wrapper,
     make_async_wrapper,
-    make_sync_cached_wrapper,
-    make_sync_invalidating_wrapper,
     make_sync_wrapper,
 )
-from fluiq.optimization.client import vectorstore_cache_key
-
-
-def _qdrant_target(args, kwargs, instance) -> str:
-    return kwargs.get("collection_name") or (args[0] if args else "") or ""
 
 
 def _payload_text(payload: Any) -> Any:
@@ -192,88 +181,24 @@ def _summarize_scroll(args, kwargs, instance, response=None) -> dict:
     return out
 
 
-def _search_cache_key(args, kwargs, instance) -> str:
-    coll = kwargs.get("collection_name") or (args[0] if args else "") or ""
-    vec = kwargs.get("query_vector")
-    return vectorstore_cache_key(
-        "qdrant", coll, vec, kwargs.get("limit"), kwargs.get("query_filter"),
-    )
-
-
-def _query_points_cache_key(args, kwargs, instance) -> str:
-    coll = kwargs.get("collection_name") or (args[0] if args else "") or ""
-    return vectorstore_cache_key(
-        "qdrant", coll, kwargs.get("query"), kwargs.get("limit"), kwargs.get("query_filter"),
-    )
-
-
-def _make_point_list(cached_result: dict) -> list:
-    items = (cached_result.get("matches") or {}).get("items") or []
-    return [
-        SimpleNamespace(
-            id=m.get("id"),
-            score=m.get("score"),
-            payload=m.get("metadata"),
-            vector=None,
-        )
-        for m in items
-    ]
-
-
-def _points_mock(cached_result: dict, args, kwargs, instance) -> list:
-    # search() returns a bare list of ScoredPoint
-    return _make_point_list(cached_result)
-
-
-def _query_points_mock(cached_result: dict, args, kwargs, instance):
-    # query_points() returns a QueryResponse with a .points attribute
-    return SimpleNamespace(points=_make_point_list(cached_result))
-
-
-_CACHED_OPS = (
-    ("search", "search", _summarize_search, _search_cache_key, _points_mock),
-    ("query_points", "query_points", _summarize_query_points, _query_points_cache_key, _query_points_mock),
-)
-_INVALIDATING_OPS = (
+_OPS = (
+    ("search", "search", _summarize_search),
+    ("query_points", "query_points", _summarize_query_points),
     ("upsert", "upsert", _summarize_upsert),
     ("delete", "delete", _summarize_delete),
-)
-_PLAIN_OPS = (
     ("retrieve", "retrieve", _summarize_retrieve),
     ("scroll", "scroll", _summarize_scroll),
 )
 
 
 def _patch_sync(cls):
-    for attr, api, summarize, key_fn, mock_fn in _CACHED_OPS:
-        if hasattr(cls, attr):
-            setattr(
-                cls, attr,
-                make_sync_cached_wrapper(getattr(cls, attr), TraceType.Qdrant, api, summarize, key_fn, mock_fn),
-            )
-    for attr, api, summarize in _INVALIDATING_OPS:
-        if hasattr(cls, attr):
-            setattr(cls, attr, make_sync_invalidating_wrapper(
-                getattr(cls, attr), TraceType.Qdrant, api, summarize, _qdrant_target,
-            ))
-    for attr, api, summarize in _PLAIN_OPS:
+    for attr, api, summarize in _OPS:
         if hasattr(cls, attr):
             setattr(cls, attr, make_sync_wrapper(getattr(cls, attr), TraceType.Qdrant, api, summarize))
 
 
 def _patch_async(cls):
-    for attr, api, summarize, key_fn, mock_fn in _CACHED_OPS:
-        if hasattr(cls, attr):
-            setattr(
-                cls, attr,
-                make_async_cached_wrapper(getattr(cls, attr), TraceType.Qdrant, api, summarize, key_fn, mock_fn),
-            )
-    for attr, api, summarize in _INVALIDATING_OPS:
-        if hasattr(cls, attr):
-            setattr(cls, attr, make_async_invalidating_wrapper(
-                getattr(cls, attr), TraceType.Qdrant, api, summarize, _qdrant_target,
-            ))
-    for attr, api, summarize in _PLAIN_OPS:
+    for attr, api, summarize in _OPS:
         if hasattr(cls, attr):
             setattr(cls, attr, make_async_wrapper(getattr(cls, attr), TraceType.Qdrant, api, summarize))
 

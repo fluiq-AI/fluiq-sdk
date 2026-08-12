@@ -11,7 +11,6 @@ from fluiq.integrations.shared.context import (
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.shared.security_gate import pre_call_guard
-from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.OpenAI.helper.utils import _to_jsonable, _strip_media
 from fluiq.integrations.OpenAI.helper.tool_trace import (
     _extract_tool_calls,
@@ -370,35 +369,6 @@ def patch_openai():
                 raise
 
             try:
-                from fluiq.integrations.shared.tool_cache import learn_from_openai_messages
-                learn_from_openai_messages(kwargs.get("messages") or [])
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(kwargs, "openai")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.OpenAI.value,
-                    "api": "chat.completions",
-                    "model": kwargs.get("model"),
-                    "messages": _to_jsonable(kwargs.get("messages")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "tool_calls": _payload.get("tool_calls"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
-
-            try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
                 _emit_chat_error(kwargs, e, start, time.time())
@@ -445,35 +415,6 @@ def patch_openai_async():
                 raise
 
             try:
-                from fluiq.integrations.shared.tool_cache import learn_from_openai_messages
-                learn_from_openai_messages(kwargs.get("messages") or [])
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(kwargs, "openai")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.OpenAI.value,
-                    "api": "chat.completions",
-                    "model": kwargs.get("model"),
-                    "messages": _to_jsonable(kwargs.get("messages")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "tool_calls": _payload.get("tool_calls"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
-
-            try:
                 response = await original(self, *args, **kwargs)
             except Exception as e:
                 _emit_chat_error(kwargs, e, start, time.time())
@@ -513,28 +454,6 @@ def patch_openai_responses():
                 if isinstance(sec_exc, FluiqSecurityError):
                     _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="responses")
                 raise
-
-            cached = pre_call_optimize(kwargs, "openai_responses")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.OpenAI.value,
-                    "api": "responses",
-                    "model": kwargs.get("model"),
-                    "input": _to_jsonable(kwargs.get("input")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
 
             try:
                 response = original(self, *args, **kwargs)
@@ -576,28 +495,6 @@ def patch_openai_responses_async():
                 if isinstance(sec_exc, FluiqSecurityError):
                     _emit_security_blocked_trace(kwargs, sec_exc, start, time.time(), api="responses")
                 raise
-
-            cached = pre_call_optimize(kwargs, "openai_responses")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.OpenAI.value,
-                    "api": "responses",
-                    "model": kwargs.get("model"),
-                    "input": _to_jsonable(kwargs.get("input")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
 
             try:
                 response = await original(self, *args, **kwargs)

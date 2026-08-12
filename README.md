@@ -292,40 +292,9 @@ except FluiqEvalError as e:
 
 ---
 
-## Trace-driven caching — `fluiq.optimize()`
-
-Activate trace-driven Redis caching. Fluiq's backend analyses your historical traces to find which LLM calls repeat most often, provisions a dedicated Redis instance for your account, and serves repeated prompts from cache — saving both latency and LLM cost.
-
-**Requires Team plan or above. Must be called after `fluiq.instrument()`.**
-
-```python
-import fluiq
-
-fluiq.instrument(api_key="fl_...")
-fluiq.optimize()                 # cache mode (default)
-```
-
-On the first LLM call after `optimize()` the SDK fetches the cache profile (which models to cache, TTL, Redis URL) and connects. Repeated identical prompts are then served from Redis without hitting the LLM API.
-
-Use `mode="observe"` to record what *would* have been a cache hit without actually intercepting calls — useful to review potential savings before enabling full caching:
-
-```python
-fluiq.optimize(mode="observe")
-```
-
-**Parameters**
-
-| Parameter | Values | Default | Description |
-|---|---|---|---|
-| `mode` | `"cache"` \| `"observe"` | `"cache"` | `cache`: intercept repeated calls and serve from Redis. `observe`: record potential hits only, no interception. |
-
-Cache hits and misses are visible on the **Optimize** tab in your dashboard.
-
----
-
 ## Combining features
 
-All four features compose freely:
+All three features compose freely:
 
 ```python
 import fluiq
@@ -333,15 +302,13 @@ import fluiq
 fluiq.instrument(api_key="fl_...")
 fluiq.secure(mode="block")
 fluiq.eval(thresholds={"hallucination": 0.8}, mode="warn")
-fluiq.optimize()
 ```
 
 Call order per LLM request:
 1. **secure (block)** — pre-call prompt check; raises `FluiqSecurityError` if blocked
-2. **optimize** — cache lookup; returns immediately on hit, no LLM call made
-3. LLM API call
-4. **secure (warn)** — post-call scan; enriches trace with security fields
-5. **eval** — evaluation in background thread (warn) or synchronously (block)
+2. LLM API call
+3. **secure (warn)** — post-call scan; enriches trace with security fields
+4. **eval** — evaluation in background thread (warn) or synchronously (block)
 
 ---
 
@@ -393,10 +360,9 @@ from fluiq.exceptions import FluiqSecurityError, FluiqEvalError
 | `fluiq.instrument()` | Free |
 | `@fluiq.trace` | Free |
 | `fluiq.eval()` | Free |
-| `fluiq.secure()` | Team |
-| `fluiq.optimize()` | Team |
+| `fluiq.secure()` | Free |
 
-Free-tier keys that call `fluiq.secure()` or `fluiq.optimize()` receive a 402 response and fall back to no-op behaviour automatically — your application continues to run unaffected.
+Metered features degrade gracefully: when a plan limit is reached the SDK falls back to no-op behaviour automatically — your application continues to run unaffected.
 
 ---
 

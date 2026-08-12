@@ -25,34 +25,6 @@ def instrument(
     _init(api_key=api_key, version=version, endpoint=endpoint)
 
 
-def optimize(mode: str = "cache") -> None:
-    """Activate trace-driven Redis caching (requires paid plan).
-
-    Must be called after ``fluiq.instrument()``.
-
-    Fluiq's backend analyses your historical traces to determine which LLM
-    calls are repeated most often and provisions a dedicated Redis instance
-    for your account.  On the first call after ``optimize()`` the SDK
-    fetches that cache profile, connects to your Redis instance, and begins
-    serving repeated prompts from cache — saving both latency and LLM cost.
-
-    Parameters
-    ----------
-    mode : "cache" | "observe"
-        ``"cache"``   (default) — full caching enabled.  Repeated LLM calls
-        that match the backend profile are intercepted before the API call
-        and served from Redis.  Real responses are stored automatically.
-
-        ``"observe"`` — no interception.  The SDK still records what *would*
-        have been a cache hit so you can review savings before opting in.
-    """
-    if mode not in ("cache", "observe"):
-        raise ValueError(f"fluiq.optimize() mode must be 'cache' or 'observe', got {mode!r}")
-    from fluiq.config import _config
-    _config["optimize"]      = True
-    _config["optimize_mode"] = mode
-
-
 def eval(
     thresholds: dict | None = None,
     metrics: list[str] | None = None,
@@ -237,23 +209,3 @@ def fetch_prompt(slug: str, env: str = "production") -> Prompt:
     )
     r.raise_for_status()
     return Prompt(r.json())
-
-
-def lookup_tool_result(tool_name: str, args):
-    """Return a cached tool result, or ``None`` if not in cache.
-
-    *args* can be a dict or a JSON string.  Keys are sorted before hashing so
-    argument order does not matter.
-
-    Typical usage inside a tool execution function::
-
-        result = fluiq.lookup_tool_result("get_weather", {"location": "London"})
-        if result is not None:
-            return result
-        return call_weather_api("London")
-    """
-    try:
-        from fluiq.optimization.client import lookup_tool_cache
-        return lookup_tool_cache(tool_name, args)
-    except Exception:
-        return None

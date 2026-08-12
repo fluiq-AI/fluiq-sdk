@@ -4,7 +4,6 @@ from ..keys import FLUIQ_API_KEY
 import fluiq
 
 fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
-fluiq.optimize()
 
 from google import genai
 from google.genai import types

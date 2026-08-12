@@ -4,7 +4,6 @@ import fluiq
 from ..keys import FLUIQ_API_KEY
 
 fluiq.instrument(api_key=FLUIQ_API_KEY, endpoint="http://localhost:8080/api")
-fluiq.optimize()
 
 client = anthropic.Anthropic()
 

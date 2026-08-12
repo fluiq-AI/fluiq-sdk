@@ -11,7 +11,6 @@ from fluiq.integrations.shared.context import (
 from fluiq.integrations.shared.llm_start import emit_llm_start
 from fluiq.integrations.shared.safety import _fail_open
 from fluiq.integrations.shared.security_gate import pre_call_guard
-from fluiq.integrations.shared.optimize_gate import pre_call_optimize
 from fluiq.integrations.Anthropic.helper.utils import _strip_media, _to_jsonable
 from fluiq.integrations.Anthropic.helper.tool_trace import (
     _extract_tool_use,
@@ -25,7 +24,6 @@ from fluiq.integrations.Anthropic.helper.mcp_trace import (
     _extract_mcp_blocks,
     _extract_mcp_results_from_messages,
 )
-from fluiq.integrations.Anthropic.helper.prompt_cache import maybe_inject_anthropic_cache_control
 from fluiq.integrations.Anthropic.helper.streaming import _MessageStreamAccumulator
 from fluiq.integrations.OpenAI.helper.streaming import _StreamProxy, _AsyncStreamProxy
 
@@ -222,41 +220,6 @@ def _build_messages_wrapper(original):
             pre_call_guard(kwargs)
 
             try:
-                from fluiq.integrations.shared.tool_cache import learn_from_anthropic_messages
-                learn_from_anthropic_messages(kwargs.get("messages") or [])
-            except Exception:
-                pass
-
-            try:
-                maybe_inject_anthropic_cache_control(kwargs)
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(kwargs, "anthropic")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.Anthropic.value,
-                    "api": "messages",
-                    "model": kwargs.get("model"),
-                    "messages": _to_jsonable(kwargs.get("messages")),
-                    "system": _to_jsonable(kwargs.get("system")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "tool_uses": _payload.get("tool_uses"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
-
-            try:
                 response = original(self, *args, **kwargs)
             except Exception as e:
                 _emit_messages_error(kwargs, e, start, time.time())
@@ -292,41 +255,6 @@ def _build_async_messages_wrapper(original):
         start = time.time()
         try:
             pre_call_guard(kwargs)
-
-            try:
-                from fluiq.integrations.shared.tool_cache import learn_from_anthropic_messages
-                learn_from_anthropic_messages(kwargs.get("messages") or [])
-            except Exception:
-                pass
-
-            try:
-                maybe_inject_anthropic_cache_control(kwargs)
-            except Exception:
-                pass
-
-            cached = pre_call_optimize(kwargs, "anthropic")
-            if cached is not None:
-                end = time.time()
-                _payload = getattr(cached, "_fluiq_payload", {})
-                log_trace({
-                    "type": "llm",
-                    "integration": TraceType.Anthropic.value,
-                    "api": "messages",
-                    "model": kwargs.get("model"),
-                    "messages": _to_jsonable(kwargs.get("messages")),
-                    "system": _to_jsonable(kwargs.get("system")),
-                    "tools": _to_jsonable(kwargs.get("tools")),
-                    "response": _payload.get("response"),
-                    "tool_uses": _payload.get("tool_uses"),
-                    "mcp_calls": _payload.get("mcp_calls"),
-                    "mcp_results": _payload.get("mcp_results"),
-                    "mcp_servers": _payload.get("mcp_servers"),
-                    "latency": end - start,
-                    "parent_id": current_parent_id(),
-                    "_cache_hit": True,
-                    "tokens": None,
-                })
-                return cached
 
             try:
                 response = await original(self, *args, **kwargs)
@@ -430,10 +358,6 @@ def _build_stream_helper_wrapper(original):
         start = time.time()
         try:
             try:
-                maybe_inject_anthropic_cache_control(kwargs)
-            except Exception:
-                pass
-            try:
                 manager = original(self, *args, **kwargs)
             except Exception as e:
                 _emit_messages_error(kwargs, e, start, time.time(), api="messages.stream")
@@ -459,10 +383,6 @@ def _build_async_stream_helper_wrapper(original):
         )
         start = time.time()
         try:
-            try:
-                maybe_inject_anthropic_cache_control(kwargs)
-            except Exception:
-                pass
             try:
                 manager = original(self, *args, **kwargs)
             except Exception as e:

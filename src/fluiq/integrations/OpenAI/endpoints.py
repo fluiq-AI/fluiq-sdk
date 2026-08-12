@@ -82,23 +82,7 @@ def patch_openai_embeddings():
     def wrapped(self, *args, **kwargs):
         if is_in_langchain_llm():
             return original(self, *args, **kwargs)
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         start = time.time()
-        cached = pre_call_optimize_embedding(kwargs, "openai")
-        if cached is not None:
-            log_trace({
-                "type": "llm",
-                "integration": TraceType.OpenAI.value,
-                "api": "embeddings",
-                "model": kwargs.get("model"),
-                "input": _to_jsonable(kwargs.get("input") or kwargs.get("prompt")),
-                "response": getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency": time.time() - start,
-                "parent_id": current_parent_id(),
-                "_cache_hit": True,
-                "tokens": None,
-            })
-            return cached
         response = original(self, *args, **kwargs)
         end = time.time()
         _emit_endpoint_trace("embeddings", kwargs, response, start, end)
@@ -114,23 +98,7 @@ def patch_openai_embeddings_async():
     async def wrapped(self, *args, **kwargs):
         if is_in_langchain_llm():
             return await original(self, *args, **kwargs)
-        from fluiq.integrations.shared.optimize_gate import pre_call_optimize_embedding
         start = time.time()
-        cached = pre_call_optimize_embedding(kwargs, "openai")
-        if cached is not None:
-            log_trace({
-                "type": "llm",
-                "integration": TraceType.OpenAI.value,
-                "api": "embeddings",
-                "model": kwargs.get("model"),
-                "input": _to_jsonable(kwargs.get("input") or kwargs.get("prompt")),
-                "response": getattr(cached, "_fluiq_payload", {}).get("response"),
-                "latency": time.time() - start,
-                "parent_id": current_parent_id(),
-                "_cache_hit": True,
-                "tokens": None,
-            })
-            return cached
         response = await original(self, *args, **kwargs)
         end = time.time()
         _emit_endpoint_trace("embeddings", kwargs, response, start, end)

@@ -8,7 +8,6 @@ from fluiq.integrations.shared.context import (
     push_trace_id,
     pop_trace_id,
     take_declared_parents,
-    _inner_cache_hit,
 )
 from fluiq.integrations.shared.safety import _fail_open
 
@@ -30,7 +29,7 @@ def _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=
 
 
 @_fail_open
-def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, *, cache_hit=False, parent_ids=None):
+def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, *, parent_ids=None):
     success = exc is None
     payload = LogTrace(
         trace_id=trace_id,
@@ -46,56 +45,27 @@ def _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end,
         status="success" if success else "error",
         started_at=start,
     )
-    data = payload.model_dump(mode="json")
-    if cache_hit:
-        data["_cache_hit"] = True
-    log_trace(data)
+    log_trace(payload.model_dump(mode="json"))
 
 
 def _build_wrapper(func, func_name: str):
     if asyncio.iscoroutinefunction(func):
         async def async_wrapper(*args, **kwargs):
-            from fluiq.config import _config
             trace_id = str(uuid.uuid4())
             parent_id = current_parent_id()
             declared = take_declared_parents()
             token = push_trace_id(trace_id)
             start = time.time()
-            _optimize = _config.get("optimize")
-            _args_key = str(args) + str(kwargs)
-            _cached_payload = None
-            if _optimize:
-                try:
-                    from fluiq.optimization.client import lookup_function_cache
-                    _cached_payload = lookup_function_cache(func_name, _args_key)
-                except Exception:
-                    pass
-            if _cached_payload is not None:
-                cached_result = _cached_payload.get("result")
-                end = time.time()
-                _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
-                pop_trace_id(token)
-                _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True, parent_ids=declared)
-                return cached_result
             _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
             exc = None
             result = None
-            _hit_token = _inner_cache_hit.set(False)
             try:
                 result = await func(*args, **kwargs)
             except Exception as e:
                 exc = e
             end = time.time()
-            _hit = _inner_cache_hit.get()
-            _inner_cache_hit.reset(_hit_token)
-            if _optimize and exc is None:
-                try:
-                    from fluiq.optimization.client import populate_function_cache
-                    populate_function_cache(func_name, _args_key, result)
-                except Exception:
-                    pass
             pop_trace_id(token)
-            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit, parent_ids=declared)
+            _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, parent_ids=declared)
             if exc is not None:
                 raise exc
             return result
@@ -104,47 +74,21 @@ def _build_wrapper(func, func_name: str):
         return async_wrapper
 
     def wrapper(*args, **kwargs):
-        from fluiq.config import _config
         trace_id = str(uuid.uuid4())
         parent_id = current_parent_id()
         declared = take_declared_parents()
         token = push_trace_id(trace_id)
         start = time.time()
-        _optimize = _config.get("optimize")
-        _args_key = str(args) + str(kwargs)
-        _cached_payload = None
-        if _optimize:
-            try:
-                from fluiq.optimization.client import lookup_function_cache
-                _cached_payload = lookup_function_cache(func_name, _args_key)
-            except Exception:
-                pass
-        if _cached_payload is not None:
-            cached_result = _cached_payload.get("result")
-            end = time.time()
-            _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
-            pop_trace_id(token)
-            _emit(trace_id, parent_id, func_name, args, kwargs, cached_result, None, start, end, cache_hit=True, parent_ids=declared)
-            return cached_result
         _emit_start(trace_id, parent_id, func_name, args, kwargs, start, parent_ids=declared)
         exc = None
         result = None
-        _hit_token = _inner_cache_hit.set(False)
         try:
             result = func(*args, **kwargs)
         except Exception as e:
             exc = e
         end = time.time()
-        _hit = _inner_cache_hit.get()
-        _inner_cache_hit.reset(_hit_token)
-        if _optimize and exc is None:
-            try:
-                from fluiq.optimization.client import populate_function_cache
-                populate_function_cache(func_name, _args_key, result)
-            except Exception:
-                pass
         pop_trace_id(token)
-        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, cache_hit=_hit, parent_ids=declared)
+        _emit(trace_id, parent_id, func_name, args, kwargs, result, exc, start, end, parent_ids=declared)
         if exc is not None:
             raise exc
         return result
