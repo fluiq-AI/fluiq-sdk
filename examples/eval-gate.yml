@@ -1,0 +1,65 @@
+# Gate a pull request on evaluation scores, and tell the reviewer why.
+#
+# Copy to .github/workflows/ in the repo whose prompts you want gated.
+#
+# The comment is the point. An exit code alone shows up as a red cross beside
+# nine other red crosses, and whoever opens the log finds a wall of log lines —
+# the reviewer deciding whether to merge never sees a number.
+
+name: Eval gate
+
+on:
+  pull_request:
+    # Only when something that can change behaviour changed. Running this on a
+    # README edit spends judge calls to learn nothing.
+    paths:
+      - "prompts/**"
+      - "src/**"
+      - ".github/workflows/eval-gate.yml"
+
+# Cancel a superseded run: pushing three times in a minute should cost one
+# evaluation, not three.
+concurrency:
+  group: eval-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for the comment. Without it the gate still runs and still
+      # fails the build; it just cannot say why on the PR.
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet fluiq
+
+      # Push the prompts this branch changed, so the eval below grades the
+      # version in the PR rather than whatever is live.
+      - name: Push resources
+        run: python -m fluiq.cli push fluiq_resources.py
+        env:
+          FLUIQ_API_KEY: ${{ secrets.FLUIQ_API_KEY }}
+
+      - name: Run evals
+        run: |
+          python -m fluiq.ci \
+            --dataset "checkout-agent" \
+            --kind metrics \
+            --metrics hallucination,relevance,completeness \
+            --task-prompt support-reply \
+            --task-model gpt-5-mini \
+            --fail-below 0.7 \
+            --pr-comment
+        env:
+          FLUIQ_API_KEY: ${{ secrets.FLUIQ_API_KEY }}
+          # Provided by Actions; the comment needs no extra secret.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FLUIQ_DASHBOARD_URL: https://app.getfluiq.com

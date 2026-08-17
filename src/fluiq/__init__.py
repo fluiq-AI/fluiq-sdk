@@ -3,6 +3,21 @@ from fluiq.decorator import trace
 from fluiq.exceptions import FluiqSecurityError, FluiqEvalError
 from fluiq.prompts import Prompt
 from fluiq.integrations.shared.context import declare_parents as join_parents
+# Code-first surface: declare evals in your repo, then `python -m fluiq.cli eval`.
+# Exported here so the docs' first line isn't a deep import path.
+#
+# The declarative Prompt/Scorer/Dataset deliberately stay in `fluiq.resources`:
+# `fluiq.Prompt` already means the *fetched* prompt object returned by
+# fetch_prompt, and re-binding it here would silently change what that name
+# refers to for every existing caller.
+from fluiq.evals.definition import Eval
+
+import re as _re
+
+# Mirrors the API's tag rule (routes/trace.normalize_tags). Duplicated because
+# the SDK cannot import from the API, and a tag the SDK accepts but the server
+# drops would fail silently.
+_TAG_RE = _re.compile(r"^[a-z0-9][a-z0-9._\-/]{0,62}$")
 
 def instrument(
     api_key:  str = API_KEY,
@@ -136,6 +151,60 @@ def feedback(
         ).raise_for_status()
     except Exception as e:
         print("[fluiq] feedback failed: ", repr(e))
+
+
+def tag(*tags: str, replace: bool = False) -> None:
+    """Label every trace from here on, so you can slice production traffic later.
+
+    The case this exists for: shipping two prompts side by side and wanting to
+    know which one scored better in the wild. Tag each cohort, then filter the
+    dashboard by tag and compare.
+
+        fluiq.tag("prompt-b", "canary")
+
+    Parameters
+    ----------
+    *tags : str
+        Lowercase letters, digits, and ``. _ - /``. Anything else is dropped
+        rather than raising — a stray character in a label must never cost you
+        the trace it was attached to.
+    replace : bool
+        By default tags accumulate, so a request handler can add one without
+        knowing what a caller already set. Pass ``replace=True`` to reset.
+
+    Tags can also be added and removed from the dashboard afterwards.
+    """
+    from fluiq.config import _config
+    cleaned = [
+        t for t in (str(x or "").strip().lower() for x in tags)
+        if t and _TAG_RE.match(t)
+    ]
+    current = [] if replace else list(_config.get("tags") or [])
+    _config["tags"] = sorted({*current, *cleaned})
+
+
+def clear_tags() -> None:
+    """Drop every tag set by :func:`tag`."""
+    from fluiq.config import _config
+    _config["tags"] = []
+
+
+def set_metadata(**values) -> None:
+    """Attach scalar key/values to every trace from here on.
+
+        fluiq.set_metadata(tenant="acme", release="2026.8.1")
+
+    Where a tag answers "which cohort is this?", metadata answers "what else was
+    true at the time?". Only strings, numbers, and booleans are kept: nested
+    structures are not filterable, so storing them would imply a capability that
+    isn't there.
+    """
+    from fluiq.config import _config
+    scalars = {
+        str(k): v for k, v in values.items()
+        if isinstance(v, (str, int, float, bool))
+    }
+    _config["metadata"] = {**(_config.get("metadata") or {}), **scalars}
 
 
 def secure(mode: str = "warn", *, guardrail: str = "default") -> None:

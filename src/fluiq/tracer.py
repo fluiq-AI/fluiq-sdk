@@ -32,6 +32,16 @@ def log_trace(data):
         # Remove legacy local-scan flag if present (no-op, kept for compat)
         data.pop("_security_scan", None)
 
+        # Tags and metadata set by fluiq.tag() / fluiq.set_metadata(). Merged
+        # rather than assigned, so a call site that tagged one specific span
+        # keeps its own labels alongside the ambient ones.
+        _tags = _config.get("tags") or []
+        if _tags:
+            data["_tags"] = sorted({*_tags, *(data.get("_tags") or [])})
+        _meta = _config.get("metadata") or {}
+        if _meta:
+            data["_metadata"] = {**_meta, **(data.get("_metadata") or {})}
+
         _is_pre_blocked = data.pop("_security_pre_blocked", False)
         if _config.get("secure", False) and not _is_pre_blocked:
             # Embed security config so /ingest fans out to the evaluator worker.

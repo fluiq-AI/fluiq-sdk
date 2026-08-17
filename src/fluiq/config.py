@@ -20,6 +20,8 @@ _config={
     "eval_thresholds": {},       # {"hallucination": 0.8, ...}
     "eval_judge_model": "claude-haiku-4-5-20251001",
     "eval_custom_judges": {},    # {judge_prompt_slug: threshold}
+    "tags": [],                  # labels stamped on every traced event
+    "metadata": {},              # scalar key/values stamped on every event
 }
 
 def auth_headers() -> dict:
