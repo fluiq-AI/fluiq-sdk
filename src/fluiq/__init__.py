@@ -63,6 +63,10 @@ def eval(
         ``{"hallucination": 0.8, "relevance": 0.7}``.
         Supported: ``hallucination``, ``faithfulness``, ``relevance``,
         ``toxicity``, ``coherence``, ``completeness``.
+
+        A metric you don't list uses the server's default pass mark (0.7), so
+        ``mode="block"`` blocks on a bad answer whether or not you set these.
+        Pass ``0`` for a metric to record it without ever failing on it.
     metrics : list[str], optional
         Which metrics to evaluate. Defaults to
         ``["hallucination", "relevance"]`` when omitted.
